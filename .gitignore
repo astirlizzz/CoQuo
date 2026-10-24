@@ -2,3 +2,4 @@
 **/obj/
 dist/
 *.user
+TrayIconSize/build/

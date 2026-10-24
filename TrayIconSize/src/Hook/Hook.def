@@ -1,0 +1,4 @@
+LIBRARY TrayIconSizeHook
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
