@@ -11,6 +11,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _showClaude;
     private readonly ToolStripMenuItem _autostart;
     private readonly Dictionary<int, ToolStripMenuItem> _intervals = new();
+    private readonly Dictionary<int, ToolStripMenuItem> _iconSizes = new();
+    private readonly ToolStripMenuItem _iconSizeStatus = new() { Enabled = false, Visible = false };
     private readonly System.Windows.Forms.Timer _timer;
     private readonly Control _dispatcher;
     private readonly Settings _settings;
@@ -51,6 +53,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _intervals.Add(value, option);
             intervals.DropDownItems.Add(option);
         }
+        var iconSizes = new ToolStripMenuItem("Icon size") { Enabled = TrayIconSizeClient.IsAvailable };
+        foreach (int size in new[] { 16, 20, 24, 28, 32 })
+        {
+            var option = new ToolStripMenuItem(size == TrayIconSizeClient.StandardSize ? "Standard" : $"{size} px")
+            {
+                Checked = size == _settings.IconSize
+            };
+            var value = size;
+            option.Click += (_, _) => ChangeIconSize(value);
+            _iconSizes.Add(value, option);
+            iconSizes.DropDownItems.Add(option);
+        }
+        iconSizes.DropDownItems.Add(_iconSizeStatus);
         _showCodex = new ToolStripMenuItem("Show Codex icon", null, (_, _) => ToggleIndicator(codex: true));
         _showClaude = new ToolStripMenuItem("Show Claude icon", null, (_, _) => ToggleIndicator(codex: false));
         _autostart = new ToolStripMenuItem("Start with Windows")
@@ -63,11 +78,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _menu.Items.AddRange(_claude.MenuItems);
         _menu.Items.AddRange(new ToolStripItem[]
         {
-            _refresh, intervals, _showCodex, _showClaude, _autostart, new ToolStripSeparator(),
+            _refresh, intervals, _showCodex, _showClaude, iconSizes, _autostart, new ToolStripSeparator(),
             new ToolStripMenuItem("Exit CoQuo", null, (_, _) => ExitThread())
         });
         _menu.Opening += (_, _) => UpdateUi();
 
+        _codex.IconSize = _claude.IconSize = _settings.IconSize;
         _codex.Enabled = _settings.ShowCodex;
         _claude.Enabled = _settings.ShowClaude;
         UpdateToggles();
@@ -131,6 +147,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _claude.OnIntervalChanged();
     }
 
+    private void ChangeIconSize(int size)
+    {
+        _settings.IconSize = size;
+        foreach (var item in _iconSizes) item.Value.Checked = item.Key == size;
+        _codex.IconSize = _claude.IconSize = size;
+        SaveSettings();
+    }
+
     private void ToggleIndicator(bool codex)
     {
         if (codex) _settings.ShowCodex = !_settings.ShowCodex;
@@ -180,6 +204,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _codex.UpdateUi();
         _claude.UpdateUi();
         _refresh.Enabled = (_codex.Enabled && !_codex.IsBusy) || (_claude.Enabled && !_claude.IsBusy);
+        var sizeError = _codex.IconSizeError ?? _claude.IconSizeError;
+        _iconSizeStatus.Visible = sizeError is not null;
+        _iconSizeStatus.Text = sizeError is null ? "" : $"Error: {sizeError}";
     }
 
     protected override void ExitThreadCore()

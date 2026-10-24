@@ -30,15 +30,16 @@ From PowerShell in this directory:
 ./build.ps1
 ```
 
-Runs the dependency-free parser tests, then produces `dist/CoQuo.exe` as a self-contained single-file Windows executable. The binary **is not signed**; do not bypass antivirus warnings blindly. You can also run it from source with `dotnet run --project CoQuo/CoQuo.csproj`.
+Builds the native TrayIconSize component (needs Visual Studio with C++ tools and the Windows SDK), runs the dependency-free parser tests, then produces `dist/CoQuo.exe` as a self-contained single-file Windows executable plus the three TrayIconSize binaries; copy all four files when installing. The binary **is not signed**; do not bypass antivirus warnings blindly. You can also run it from source with `dotnet run --project CoQuo/CoQuo.csproj`.
 
 ## UI
 
 - Single-click tray icon: standard Windows behavior; hover for usage.
 - Right-click (either icon): Codex weekly and Claude 5-hour remaining percent, reset time, last update/error; refresh; polling interval; show/hide each icon; start with Windows; exit.
+- **Icon size** (Standard / 20 / 24 / 28 / 32 px): draws CoQuo's icons larger than the Windows 16 px through the bundled [TrayIconSize](TrayIconSize/README.md) component, which modifies Explorer's taskbar XAML. Standard does not load anything into Explorer. Needs `TrayIconSizeClient.dll`, `TrayIconSizeHost.exe` and `TrayIconSizeHook.dll` next to `CoQuo.exe`.
 - Double-click an icon: refresh that source (with 15-second minimum between actual requests).
 - Startup uses the current user's `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run` key; no UAC. Recommended to enable after publishing, not while using `dotnet run`.
-- Refresh interval and icon visibility (`ShowCodex`, `ShowClaude`) saved in `%LOCALAPPDATA%\\CoQuo\\settings.json`.
+- Refresh interval, icon visibility (`ShowCodex`, `ShowClaude`) and `IconSize` saved in `%LOCALAPPDATA%\\CoQuo\\settings.json`.
 
 ## Security & rate-limit policy
 

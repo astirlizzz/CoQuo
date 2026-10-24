@@ -8,6 +8,7 @@ internal sealed class Settings
     public int RefreshSeconds { get; set; } = 60;
     public bool ShowCodex { get; set; } = true;
     public bool ShowClaude { get; set; } = true;
+    public int IconSize { get; set; } = 16;
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -24,6 +25,7 @@ internal sealed class Settings
                 {
                     // At least one icon must stay visible: it is the only way to reach the menu.
                     if (!result.ShowCodex && !result.ShowClaude) result.ShowCodex = true;
+                    if (result.IconSize is not (16 or 20 or 24 or 28 or 32)) result.IconSize = 16;
                     return result;
                 }
             }

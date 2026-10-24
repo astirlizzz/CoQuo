@@ -10,4 +10,11 @@
     <RootNamespace>CoQuo</RootNamespace>
     <Version>0.1.0</Version>
   </PropertyGroup>
+  <!-- Optional native TrayIconSize component (build TrayIconSize/build.ps1 first); ships next to the exe. -->
+  <ItemGroup>
+    <None Include="..\TrayIconSize\build\Release\TrayIconSizeClient.dll;..\TrayIconSize\build\Release\TrayIconSizeHost.exe;..\TrayIconSize\build\Release\TrayIconSizeHook.dll"
+          Condition="Exists('..\TrayIconSize\build\Release\TrayIconSizeClient.dll')"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+          ExcludeFromSingleFile="true" Visible="false" />
+  </ItemGroup>
 </Project>

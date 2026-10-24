@@ -17,6 +17,10 @@ Second, independently toggleable icon with the remaining **5-hour** Claude Code 
 1. **`GET api.anthropic.com/api/oauth/usage` with Claude Code's stored OAuth token (selected).** Accurate, works while Claude Code is closed as long as the token is valid. Undocumented; requires reading the access token (read-only, per request, never refreshed).
 2. Status-line bridge (Claude Code passes `rate_limits` to a status-line script, which writes a file). No token access, but data only flows during an active session and occupies the user's `statusLine` slot. Rejected.
 
+## Larger tray icons (added 2026-10-24)
+
+Windows draws every notification icon at 16 DIP and `Shell_NotifyIcon` has no size parameter, so the optional *Icon size* setting goes through the separate [TrayIconSize](../TrayIconSize/README.md) component (C++: SDK DLL, per-session host, XAML Diagnostics hook in explorer.exe). CoQuo reads its WinForms `NotifyIcon` identity (`_window` handle, `_id`) by reflection and calls the SDK on a background queue; Standard size never starts the host.
+
 ## Architecture
 
 - `TrayApplicationContext` (WinForms message loop): shared menu, timer, settings, the Codex child process; owns two `QuotaIndicator`s.

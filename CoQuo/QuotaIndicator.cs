@@ -75,8 +75,33 @@ internal sealed class QuotaIndicator : IDisposable
             _tray.Visible = value;
             foreach (var item in MenuItems) item.Visible = value;
             if (value) _nextPollUtc = DateTimeOffset.MinValue;
+            ApplyIconSize();
             UpdateUi();
         }
+    }
+
+    private int _iconSize = TrayIconSizeClient.StandardSize;
+    private int _appliedIconSize = TrayIconSizeClient.StandardSize;
+
+    /// <summary>Displayed tray size in DIP; 16 is the Windows standard and needs no TrayIconSize host.</summary>
+    public int IconSize
+    {
+        get => _iconSize;
+        set
+        {
+            _iconSize = value;
+            ApplyIconSize();
+        }
+    }
+
+    public string? IconSizeError { get; private set; }
+
+    private void ApplyIconSize()
+    {
+        int wanted = _enabled ? _iconSize : TrayIconSizeClient.StandardSize;
+        if (_disposed || wanted == _appliedIconSize || !TrayIconSizeClient.IsAvailable) return;
+        _appliedIconSize = wanted;
+        TrayIconSizeClient.Apply(_tray, wanted, error => IconSizeError = error);
     }
 
     private int IntervalSeconds => Math.Max(_minIntervalSeconds, _refreshSeconds());
