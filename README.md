@@ -1,21 +1,25 @@
-# CoQuo — Codex weekly remaining % for Windows
+# CoQuo — Codex weekly / Claude Code 5-hour remaining % for Windows
 
 Minimal, Windows 11 notification-area-only monitor (WinForms + .NET 8).
 
 ## Behavior
 
-- Shows remaining weekly Codex allowance as a large numeral on a green / amber / red icon.
-- Reads account-wide `codex` window of **10080 minutes** (7 days), regardless of whether it is `primary` or `secondary`.
+- Two independent tray icons, each can be hidden from the menu (the last visible one cannot):
+  - **Codex** — remaining weekly allowance, dark icon. Reads account-wide `codex` window of **10080 minutes** (7 days), regardless of whether it is `primary` or `secondary`.
+  - **Claude Code** — remaining **5-hour** session allowance, terracotta icon.
+- Both show a large numeral (a check mark at 100%); the outline is green / amber / red by remaining percent.
 - Tooltip and right-click menu contain percentage, reset time in local timezone, last update/error.
 - Changes icon to gray on errors, stale data, or after a scheduled reset until upstream confirms the new figure. Never fabricates 100% when a timer expires.
-- Receives `account/rateLimits/updated` from the local Codex app-server; also polls `account/rateLimits/read` every **60 seconds by default** (configurable 1, 2, 5, 10 minutes).
+- Codex: receives `account/rateLimits/updated` from the local Codex app-server; also polls `account/rateLimits/read` every **60 seconds by default** (configurable 1, 2, 5, 10 minutes). Hiding the Codex icon stops the app-server child process.
+- Claude: polls the Claude Code usage endpoint at the same interval but **never more often than every 2 minutes**.
 - Backoff on errors up to 15 minutes; manual refresh throttled to 15 seconds. No periodic timer requests beyond the configured interval.
-- No browser scraping, API key, OAuth token access, saved credentials, admin rights, or server-side changes.
+- No browser scraping, API key, saved credentials, admin rights, or server-side changes. The only token access is the read-only Claude Code token described below.
 
 ## Prerequisites
 
 - Windows 11 x64 (Windows 10 may also work).
-- Existing **Codex CLI** installed and logged into ChatGPT, accessible as `codex` in PATH (either `codex.exe` or `codex.cmd`). You can override via `COQUO_CODEX_PATH` pointing to the desired executable/shim.
+- For Codex: existing **Codex CLI** installed and logged into ChatGPT, accessible as `codex` in PATH (either `codex.exe` or `codex.cmd`). You can override via `COQUO_CODEX_PATH` pointing to the desired executable/shim.
+- For Claude: **Claude Code** logged in with a Claude subscription (Pro/Max/Team), so `~/.claude/.credentials.json` exists. `CLAUDE_CONFIG_DIR` is honored.
 - .NET 8 SDK to compile. The published self-contained exe does not need .NET installed on the target computer.
 
 ## Build
@@ -31,16 +35,30 @@ Runs the dependency-free parser tests, then produces `dist/CoQuo.exe` as a self-
 ## UI
 
 - Single-click tray icon: standard Windows behavior; hover for usage.
-- Right-click: current weekly remaining percent, reset, last update/error; refresh; polling interval; start with Windows; exit.
-- Double-click: refresh (with 15-second minimum between actual requests).
+- Right-click (either icon): Codex weekly and Claude 5-hour remaining percent, reset time, last update/error; refresh; polling interval; show/hide each icon; start with Windows; exit.
+- Double-click an icon: refresh that source (with 15-second minimum between actual requests).
 - Startup uses the current user's `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run` key; no UAC. Recommended to enable after publishing, not while using `dotnet run`.
-- Refresh settings saved in `%LOCALAPPDATA%\\CoQuo\\settings.json`.
+- Refresh interval and icon visibility (`ShowCodex`, `ShowClaude`) saved in `%LOCALAPPDATA%\\CoQuo\\settings.json`.
 
 ## Security & rate-limit policy
 
 Uses `codex app-server` child process on local JSONL stdio. The app-server owns OpenAI auth and token refresh. CoQuo does not open `~/.codex/auth.json`, never copies browser cookies, and makes no direct OpenAI HTTPS requests.
 
+### Claude Code
+
+Claude Code has no local server equivalent to `codex app-server`, so CoQuo calls `GET https://api.anthropic.com/api/oauth/usage` (header `anthropic-beta: oauth-2025-04-20`) and reads `five_hour.utilization` / `five_hour.resets_at`. This endpoint is **undocumented** and may change.
+
+Token handling:
+
+- `~/.claude/.credentials.json` is re-read before every request; `claudeAiOauth.accessToken` lives only in a local variable for the duration of that request and is sent only to `api.anthropic.com`.
+- The token is never written, logged, shown in the UI, or included in error text. The refresh token is never used and CoQuo never refreshes the login — Claude Code owns it.
+- If the token has expired (Claude Code refreshes it while running) or is rejected, the icon turns gray with "open Claude Code"; no request is sent for an expired token.
+
+### Rate limits
+
 OpenAI has not published a guaranteed safe polling threshold specifically for this read. A 60-second interval is a conservative application choice **not a guarantee against throttling or enforcement**. Avoid configuring much faster reads; honor server throttling/backoff. Notifications from the local app-server do not necessarily arrive for Codex activity in another process/device; the timer is authoritative fallback. Usage reporting may itself lag upstream.
+
+Anthropic has not published a polling budget for the Claude usage endpoint either, and it answers 429 to aggressive polling; CoQuo therefore polls it at most every 2 minutes and applies the same backoff and 15-minute 429 pause.
 
 ### Protocol
 
@@ -54,6 +72,7 @@ The project was authored in a Linux sandbox where the .NET SDK and Windows tray 
 
 ## Possible next changes
 
+- Claude 7-day windows (`seven_day`, `seven_day_opus`) as optional extra indicators.
 - Monitor actual session activity to dynamically slow polling when inactive.
 - Add proper logging stripped of secrets and the option to export diagnostics.
 - Accessibility enhancement: high contrast 16px icon testing at 100–200% DPI.

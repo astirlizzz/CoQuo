@@ -6,6 +6,8 @@ namespace CoQuo;
 internal sealed class Settings
 {
     public int RefreshSeconds { get; set; } = 60;
+    public bool ShowCodex { get; set; } = true;
+    public bool ShowClaude { get; set; } = true;
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -19,7 +21,11 @@ internal sealed class Settings
             {
                 var result = JsonSerializer.Deserialize<Settings>(File.ReadAllText(SettingsPath));
                 if (result is not null && result.RefreshSeconds is 60 or 120 or 300 or 600)
+                {
+                    // At least one icon must stay visible: it is the only way to reach the menu.
+                    if (!result.ShowCodex && !result.ShowClaude) result.ShowCodex = true;
                     return result;
+                }
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }

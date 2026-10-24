@@ -5,5 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
-  <ItemGroup><Compile Include="../CoQuo/UsageParser.cs" Link="UsageParser.cs" /></ItemGroup>
+  <ItemGroup>
+    <Compile Include="../CoQuo/UsageParser.cs" Link="UsageParser.cs" />
+    <Compile Include="../CoQuo/ClaudeUsageParser.cs" Link="ClaudeUsageParser.cs" />
+  </ItemGroup>
 </Project>

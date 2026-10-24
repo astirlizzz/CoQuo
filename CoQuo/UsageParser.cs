@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace CoQuo;
 
-public sealed record WeeklyUsage(double RemainingPercent, DateTimeOffset? ResetAt, int WindowMinutes)
+public sealed record QuotaUsage(double RemainingPercent, DateTimeOffset? ResetAt, int WindowMinutes)
 {
     public int RoundedRemaining => (int)Math.Round(RemainingPercent, MidpointRounding.AwayFromZero);
 }
@@ -12,7 +12,7 @@ public static class UsageParser
     // Do not assume primary=5h and secondary=7d: the server may return only one window.
     public const int WeeklyMinutes = 7 * 24 * 60;
 
-    public static bool TryParse(JsonElement json, out WeeklyUsage? usage)
+    public static bool TryParse(JsonElement json, out QuotaUsage? usage)
     {
         usage = null;
         if (json.ValueKind != JsonValueKind.Object) return false;
@@ -34,7 +34,7 @@ public static class UsageParser
                TryFindWeekly(json, out usage);
     }
 
-    private static bool TryFindWeekly(JsonElement rateLimits, out WeeklyUsage? usage)
+    private static bool TryFindWeekly(JsonElement rateLimits, out QuotaUsage? usage)
     {
         usage = null;
         foreach (var key in new[] { "primary", "secondary" })
@@ -53,7 +53,7 @@ public static class UsageParser
                 catch (ArgumentOutOfRangeException) { /* unknown reset time */ }
             }
 
-            usage = new WeeklyUsage(100 - used, reset, WeeklyMinutes);
+            usage = new QuotaUsage(100 - used, reset, WeeklyMinutes);
             return true;
         }
         return false;
