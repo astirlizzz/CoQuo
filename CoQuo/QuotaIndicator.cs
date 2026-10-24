@@ -41,6 +41,7 @@ internal sealed class QuotaIndicator : IDisposable
     private string? _lastError;
     private int? _displayedValue;
     private bool _displayedStale = true;
+    private TimeBar? _displayedBar;
 
     public QuotaIndicator(string name, QuotaWindow window, IconProvider provider,
         Func<CancellationToken, Task<QuotaReading>> fetch, Func<Task>? onFailure,
@@ -130,7 +131,28 @@ internal sealed class QuotaIndicator : IDisposable
         int wanted = _enabled ? _iconSize : TrayIconSizeClient.StandardSize;
         if (_disposed || wanted == _appliedIconSize || !TrayIconSizeClient.IsAvailable) return;
         _appliedIconSize = wanted;
-        TrayIconSizeClient.Apply(_tray, wanted, error => IconSizeError = error);
+        // Enlarged icons get the time bar, which needs a wider-than-tall box.
+        int width = wanted > TrayIconSizeClient.StandardSize
+            ? (int)Math.Round(wanted * TrayIconPainter.TimeBarAspect) : wanted;
+        TrayIconSizeClient.Apply(_tray, width, wanted, error =>
+        {
+            IconSizeError = error;
+            UpdateUi();
+        });
+    }
+
+    // Only a successfully widened icon has room for the bar; a square one would show it squeezed.
+    private bool ShowsTimeBar => _appliedIconSize > TrayIconSizeClient.StandardSize && IconSizeError is null;
+
+    // Steps of the drawn level: the icon is repainted a few dozen times per window, not every second.
+    private const int TimeBarSteps = 48;
+
+    private TimeBar? CurrentTimeBar(QuotaUsage? usage)
+    {
+        if (!ShowsTimeBar) return null;
+        var now = DateTimeOffset.UtcNow;
+        var level = usage?.TimeLeft(now) is { } left ? Math.Ceiling(left * TimeBarSteps) / TimeBarSteps : (double?)null;
+        return new TimeBar(level, usage?.Pace(now));
     }
 
     private int IntervalSeconds => Math.Max(_minIntervalSeconds, _refreshSeconds());
@@ -231,27 +253,33 @@ internal sealed class QuotaIndicator : IDisposable
         var usage = Usage;
         var value = usage?.RoundedRemaining;
         var stale = IsStale();
-        if (value != _displayedValue || stale != _displayedStale)
+        var bar = CurrentTimeBar(usage);
+        if (value != _displayedValue || stale != _displayedStale || bar != _displayedBar)
         {
-            var icon = TrayIconPainter.Create(value, stale, _provider);
+            var icon = TrayIconPainter.Create(value, stale, _provider, bar);
             var old = _tray.Icon;
             _tray.Icon = icon;
             old?.Dispose();
             _displayedValue = value;
             _displayedStale = stale;
+            _displayedBar = bar;
         }
         // A reading without this window means the account has no such limit (e.g. Codex without 5-hour).
         var missing = usage is null && _lastReading is not null ? "not reported" : "unavailable";
         _value.Text = usage is null ? $"{Title}: {missing}" :
             $"{Title}: {usage.RemainingPercent.ToString("0.#", CultureInfo.InvariantCulture)}% left" +
             (stale ? " (STALE)" : "");
+        var timeLeft = usage?.TimeLeft(DateTimeOffset.UtcNow);
+        var windowLeft = timeLeft is { } share ? $", {share * 100:0}% of window left" : "";
         _reset.Text = usage?.ResetAt is { } reset ?
-            $"Resets: {reset.ToLocalTime():ddd, dd MMM HH:mm}{Until(reset)}" : "Resets: unknown";
+            $"Resets: {reset.ToLocalTime():ddd, dd MMM HH:mm}{Until(reset)}{windowLeft}" :
+            timeLeft == 1 ? "Resets: window starts with the next use" : "Resets: unknown";
         var retry = RetryText();
         _updated.Text = _lastError is not null ? $"Error: {Shorten(_lastError, 80)}{retry}" :
             _lastSuccessUtc is { } updated ? $"Updated: {updated.ToLocalTime():HH:mm:ss}" : "Updated: never";
         var headline = usage is null ? $"CoQuo: {ShortTitle} {missing}" :
-            $"CoQuo: {value}% {ShortTitle} left" + (stale ? " (stale)" : "");
+            $"CoQuo: {value}% {ShortTitle} left" + (timeLeft is { } time ? $", {time * 100:0}% of time" : "") +
+            (stale ? " (stale)" : "");
         // The reason sits in the tooltip too, so a gray icon explains itself on hover.
         _tray.Text = Shorten(_lastError is null ? headline : $"{headline}\n{Shorten(_lastError, 60)}{retry}", 127);
     }

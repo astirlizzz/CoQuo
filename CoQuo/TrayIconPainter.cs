@@ -6,6 +6,9 @@ namespace CoQuo;
 
 internal enum IconProvider { Codex, Claude }
 
+/// <summary>Gauge next to the icon: share of the limit window still ahead, colored by pace.</summary>
+internal sealed record TimeBar(double? Level, QuotaPace? Pace);
+
 internal static class TrayIconPainter
 {
     [DllImport("user32.dll", SetLastError = true)]
@@ -18,15 +21,18 @@ internal static class TrayIconPainter
         ("Segoe UI", FontStyle.Bold)
     };
 
-    public static Icon Create(int? remaining, bool stale, IconProvider provider)
+    // With a time bar the picture is this much wider than tall; TrayIconSize stretches the square icon back.
+    public const double TimeBarAspect = 1.25;
+
+    public static Icon Create(int? remaining, bool stale, IconProvider provider, TimeBar? bar = null)
     {
-        using var image = Render(remaining, stale, provider);
+        using var image = Render(remaining, stale, provider, bar);
         var nativeHandle = image.GetHicon();
         try { return (Icon)Icon.FromHandle(nativeHandle).Clone(); }
         finally { DestroyIcon(nativeHandle); }
     }
 
-    internal static Bitmap Render(int? remaining, bool stale, IconProvider provider)
+    internal static Bitmap Render(int? remaining, bool stale, IconProvider provider, TimeBar? bar = null)
     {
         // Render large and let Windows scale to the taskbar's actual size.
         const int size = 128;
@@ -35,6 +41,18 @@ internal static class TrayIconPainter
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
         g.Clear(Color.Transparent);
+        if (bar is not null)
+        {
+            // Draw the wide picture squeezed into the square icon; vector drawing keeps it sharp once stretched back.
+            g.ScaleTransform((float)(1 / TimeBarAspect), 1);
+            DrawTimeBar(g, bar, stale, size * (float)TimeBarAspect);
+        }
+        DrawIcon(g, remaining, stale, provider);
+        return image;
+    }
+
+    private static void DrawIcon(Graphics g, int? remaining, bool stale, IconProvider provider)
+    {
         var color = stale || remaining is null ? Color.FromArgb(135, 148, 160)
                   : remaining > 25 ? Color.FromArgb(71, 210, 172)
                   : remaining > 10 ? Color.FromArgb(255, 165, 0)
@@ -58,7 +76,39 @@ internal static class TrayIconPainter
         // Three digits are cramped at tray size; a full allowance reads better as a check mark.
         if (remaining == 100) DrawCheck(g, shade);
         else DrawLabel(g, remaining?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?", shade);
-        return image;
+    }
+
+    // Vertical gauge filling from the bottom in the strip right of the 128-unit icon, up to `right`.
+    private static void DrawTimeBar(Graphics g, TimeBar bar, bool stale, float right)
+    {
+        var track = new RectangleF(right - 24, 6, 22, 116);
+        using var trackPath = RoundedRect(track, 7);
+        // Light enough to show the empty part on a dark taskbar, dark enough for a light one.
+        using var trackBrush = new SolidBrush(Color.FromArgb(70, 82, 90));
+        g.FillPath(trackBrush, trackPath);
+        if (bar.Level is not { } level || level <= 0) return;
+        var color = stale || bar.Pace is null ? Color.FromArgb(135, 148, 160)
+                  : bar.Pace == QuotaPace.OnTrack ? Color.FromArgb(57, 230, 90)
+                  : bar.Pace == QuotaPace.Behind ? Color.FromArgb(255, 170, 0)
+                  : Color.FromArgb(255, 60, 60);
+        var inner = RectangleF.Inflate(track, -4, -4);
+        // A sliver stays visible until the reset itself.
+        float height = Math.Max(6, inner.Height * (float)Math.Min(level, 1));
+        using var fillPath = RoundedRect(new RectangleF(inner.Left, inner.Bottom - height, inner.Width, height), 4);
+        using var fillBrush = new SolidBrush(color);
+        g.FillPath(fillBrush, fillPath);
+    }
+
+    private static GraphicsPath RoundedRect(RectangleF r, float radius)
+    {
+        float d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
+        var path = new GraphicsPath();
+        path.AddArc(r.Left, r.Top, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Top, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.Left, r.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     private static GraphicsPath CreateContour()

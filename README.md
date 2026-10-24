@@ -9,6 +9,7 @@ Minimal, Windows 11 notification-area-only monitor (WinForms + .NET 8).
   - **Claude Code** — terracotta icon; `five_hour` and `seven_day` windows.
 - Every reading keeps both windows, so switching between them redraws without a new request. A window the last response did not contain (e.g. no 5-hour limit on the Codex plan) is grayed out in the menu.
 - Both show a large numeral (a check mark at 100%); the outline is green / amber / red by remaining percent.
+- With an enlarged icon size the icon is 25% wider and has a **time bar** on the right: the share of the limit window still ahead of the reset (full before the window has started). Its color is the pace (experimental): green while the remaining allowance is no more than 10 points below the remaining time, amber up to 25 points, red beyond that — at this rate the allowance runs out before the reset.
 - Tooltip and right-click menu contain percentage, reset time in local timezone, last update/error.
 - Changes icon to gray on errors, stale data, or after a scheduled reset until upstream confirms the new figure. Never fabricates 100% when a timer expires.
 - Codex: receives `account/rateLimits/updated` from the local Codex app-server; also polls `account/rateLimits/read` every **60 seconds by default** (configurable 1, 2, 5, 10 minutes). Hiding the Codex icon stops the app-server child process.
@@ -37,7 +38,7 @@ Builds the native TrayIconSize component (needs Visual Studio with C++ tools and
 
 - Single-click tray icon: standard Windows behavior; hover for usage.
 - Right-click (either icon): remaining percent of each shown limit, reset time, last update/error; refresh; polling interval; limit to show per service; icon size; start with Windows; exit.
-- **Icon size** (Standard / 20 / 24 / 28 / 32 px): draws CoQuo's icons larger than the Windows 16 px through the bundled [TrayIconSize](TrayIconSize/README.md) component, which modifies Explorer's taskbar XAML. Standard does not load anything into Explorer. Needs `TrayIconSizeClient.dll`, `TrayIconSizeHost.exe` and `TrayIconSizeHook.dll` next to `CoQuo.exe`.
+- **Icon size** (Standard / 20 / 24 / 28 / 32 px high, 25% wider for the time bar; Standard has no bar): draws CoQuo's icons larger than the Windows 16 px through the bundled [TrayIconSize](TrayIconSize/README.md) component, which modifies Explorer's taskbar XAML. Standard does not load anything into Explorer. Needs `TrayIconSizeClient.dll`, `TrayIconSizeHost.exe` and `TrayIconSizeHook.dll` next to `CoQuo.exe`.
 - Double-click an icon: refresh that source (with 15-second minimum between actual requests).
 - Startup uses the current user's `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run` key; no UAC. Recommended to enable after publishing, not while using `dotnet run`.
 - Refresh interval, shown limit (`CodexDisplay`, `ClaudeDisplay`: `FiveHour` / `Weekly` / `Hidden`; the older `ShowCodex`/`ShowClaude` flags are migrated) and `IconSize` saved in `%LOCALAPPDATA%\\CoQuo\\settings.json`.

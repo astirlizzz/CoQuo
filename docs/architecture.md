@@ -21,6 +21,10 @@ Second, independently toggleable icon with the remaining **5-hour** Claude Code 
 
 Windows draws every notification icon at 16 DIP and `Shell_NotifyIcon` has no size parameter, so the optional *Icon size* setting goes through the separate [TrayIconSize](../TrayIconSize/README.md) component (C++: SDK DLL, per-session host, XAML Diagnostics hook in explorer.exe). CoQuo reads its WinForms `NotifyIcon` identity (`_window` handle, `_id`) by reflection and calls the SDK on a background queue; Standard size never starts the host.
 
+## Time bar (added 2026-10-24, experimental colors)
+
+Enlarged icons are requested 1.25× wider than tall (TrayIconSize protocol v2, width × height) and the painter draws the 160×128 picture squeezed into the 128×128 `HICON` (Explorer stretches it back with `Stretch=Fill`). The strip on the right is `QuotaUsage.TimeLeft` — (reset − now) / window, 1 when there is no reset yet and nothing is used. Its color is `QuotaUsage.Pace`: remaining time minus remaining allowance ≤ 10 points on track, ≤ 25 behind, more short. The outline keeps its own rule (remaining allowance); whether both should share one rule is open. The level is quantized to 48 steps and computed from the last reading on the 1-second UI timer — no extra requests. Not shown at Standard size or when the size request failed (a square icon would show it squeezed).
+
 ## Architecture
 
 - `TrayApplicationContext` (WinForms message loop): shared menu, timer, settings, the Codex child process; owns two `QuotaIndicator`s.

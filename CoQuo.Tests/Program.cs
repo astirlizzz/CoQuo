@@ -37,6 +37,18 @@ var earlier = new QuotaReading(new QuotaUsage(50, null, 300), new QuotaUsage(70,
 var merged = new QuotaReading(null, new QuotaUsage(65, null, 10080)).Over(earlier);
 Check("merge keeps missing window", merged.FiveHour?.RemainingPercent == 50 && merged.Weekly?.RemainingPercent == 65);
 
+// Time bar: share of the window ahead and the pace against it.
+var now = new DateTimeOffset(2026, 10, 24, 12, 0, 0, TimeSpan.Zero);
+QuotaUsage FiveHour(double remaining, double hoursToReset) => new(remaining, now.AddHours(hoursToReset), 300);
+Check("time left mid-window", Math.Abs(FiveHour(50, 2.5).TimeLeft(now)!.Value - 0.5) < 1e-9);
+Check("time left after reset", FiveHour(50, -1).TimeLeft(now) == 0);
+Check("time left before window starts", new QuotaUsage(100, null, 300).TimeLeft(now) == 1);
+Check("time left unknown", new QuotaUsage(64, null, 300).TimeLeft(now) is null && new QuotaUsage(64, null, 300).Pace(now) is null);
+Check("pace fresh window on track", FiveHour(95, 5).Pace(now) == QuotaPace.OnTrack);
+Check("pace ahead on track", FiveHour(80, 1).Pace(now) == QuotaPace.OnTrack);
+Check("pace behind at margin", FiveHour(40, 2.5).Pace(now) == QuotaPace.OnTrack && FiveHour(39, 2.5).Pace(now) == QuotaPace.Behind);
+Check("pace short", FiveHour(25, 2.5).Pace(now) == QuotaPace.Behind && FiveHour(24, 2.5).Pace(now) == QuotaPace.Short);
+
 Console.WriteLine($"{total - failures}/{total} tests passed");
 return failures == 0 ? 0 : 1;
 

@@ -12,7 +12,7 @@ internal static class TrayIconSizeClient
     public const int StandardSize = 16;
 
     [DllImport("TrayIconSizeClient.dll", ExactSpelling = true)]
-    private static extern int TrayIconSize_SetIconSize(IntPtr hwnd, uint uid, IntPtr guid, uint sizeDip);
+    private static extern int TrayIconSize_SetIconSizeEx(IntPtr hwnd, uint uid, IntPtr guid, uint widthDip, uint heightDip);
 
     [DllImport("TrayIconSizeClient.dll", ExactSpelling = true)]
     private static extern int TrayIconSize_RemoveIcon(IntPtr hwnd, uint uid, IntPtr guid);
@@ -22,8 +22,8 @@ internal static class TrayIconSizeClient
 
     public static bool IsAvailable => File.Exists(Path.Combine(AppContext.BaseDirectory, "TrayIconSizeClient.dll"));
 
-    /// <summary>Registers (size &gt; 16) or drops the icon's size; reports the outcome on the caller's context.</summary>
-    public static void Apply(NotifyIcon icon, int size, Action<string?> completed)
+    /// <summary>Registers (height &gt; 16) or drops the icon's size; reports the outcome on the caller's context.</summary>
+    public static void Apply(NotifyIcon icon, int width, int height, Action<string?> completed)
     {
         // WinForms keeps the Shell_NotifyIcon identity private; read it before leaving the UI thread.
         if (!TryGetIdentity(icon, out var hwnd, out var uid))
@@ -39,8 +39,8 @@ internal static class TrayIconSizeClient
                 string? error = null;
                 try
                 {
-                    int hr = size > StandardSize
-                        ? TrayIconSize_SetIconSize(hwnd, uid, IntPtr.Zero, (uint)size)
+                    int hr = height > StandardSize
+                        ? TrayIconSize_SetIconSizeEx(hwnd, uid, IntPtr.Zero, (uint)width, (uint)height)
                         : TrayIconSize_RemoveIcon(hwnd, uid, IntPtr.Zero);
                     if (hr < 0) error = Marshal.GetExceptionForHR(hr)?.Message ?? $"0x{hr:X8}";
                 }

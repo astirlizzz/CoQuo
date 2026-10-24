@@ -4,8 +4,32 @@ namespace CoQuo;
 
 public sealed record QuotaUsage(double RemainingPercent, DateTimeOffset? ResetAt, int WindowMinutes)
 {
+    // Allowance may lag the clock by this many points before the pace turns amber / red,
+    // so the first request of a fresh window does not alarm.
+    public const double BehindMargin = 10;
+    public const double ShortMargin = 25;
+
     public int RoundedRemaining => (int)Math.Round(RemainingPercent, MidpointRounding.AwayFromZero);
+
+    /// <summary>Share of the window still ahead (1 = just started); null when unknown.</summary>
+    public double? TimeLeft(DateTimeOffset now)
+    {
+        // Without a reset time an untouched allowance means the window starts with the next request.
+        if (ResetAt is not { } reset) return RoundedRemaining == 100 ? 1 : null;
+        if (WindowMinutes <= 0) return null;
+        return Math.Clamp((reset - now).TotalMinutes / WindowMinutes, 0, 1);
+    }
+
+    /// <summary>Whether the allowance outlasts the window at the current rate of use.</summary>
+    public QuotaPace? Pace(DateTimeOffset now)
+    {
+        if (TimeLeft(now) is not { } left) return null;
+        double lag = left * 100 - RemainingPercent;
+        return lag <= BehindMargin ? QuotaPace.OnTrack : lag <= ShortMargin ? QuotaPace.Behind : QuotaPace.Short;
+    }
 }
+
+public enum QuotaPace { OnTrack, Behind, Short }
 
 public enum QuotaWindow { FiveHour, Weekly }
 
