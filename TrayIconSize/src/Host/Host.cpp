@@ -135,7 +135,7 @@ namespace
         case Op::SetSize:
         {
             if (!g_supported) return HRESULT_FROM_WIN32(ERROR_OLD_WIN_VERSION);
-            if (request.sizeDip < MinSizeDip || request.sizeDip > MaxSizeDip) return E_INVALIDARG;
+            if (!ValidSize(request.widthDip, request.heightDip)) return E_INVALIDARG;
             if (!request.icon.hasGuid)
             {
                 // An application may only resize icons of its own windows.
@@ -144,9 +144,13 @@ namespace
                 if (!IsWindow(hwnd) || !GetWindowThreadProcessId(hwnd, &owner) || owner != clientPid)
                     return E_ACCESSDENIED;
             }
-            if (existing != rules.end()) existing->sizeDip = request.sizeDip;
+            if (existing != rules.end())
+            {
+                existing->widthDip = request.widthDip;
+                existing->heightDip = request.heightDip;
+            }
             else if (RuleCount() >= MaxRules) return E_OUTOFMEMORY;
-            else rules.push_back({ request.icon, request.sizeDip, 0 });
+            else rules.push_back({ request.icon, request.widthDip, request.heightDip });
             break;
         }
         case Op::Remove:

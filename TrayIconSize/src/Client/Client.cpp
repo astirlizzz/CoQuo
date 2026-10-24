@@ -150,8 +150,13 @@ namespace
 
 TRAYICONSIZE_API TrayIconSize_SetIconSize(HWND hwnd, UINT uid, const GUID* guid, UINT sizeDip)
 {
+    return TrayIconSize_SetIconSizeEx(hwnd, uid, guid, sizeDip, sizeDip);
+}
+
+TRAYICONSIZE_API TrayIconSize_SetIconSizeEx(HWND hwnd, UINT uid, const GUID* guid, UINT widthDip, UINT heightDip)
+{
     if (!guid && !hwnd) return E_INVALIDARG;
-    Request request{ ProtocolVersion, Op::SetSize, MakeId(hwnd, uid, guid), sizeDip, 0 };
+    Request request{ ProtocolVersion, Op::SetSize, MakeId(hwnd, uid, guid), widthDip, heightDip };
     std::lock_guard lock(g_lock);
     HRESULT hr = Transact(request);
     if (FAILED(hr)) return hr;

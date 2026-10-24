@@ -90,7 +90,8 @@ namespace
     struct RuleRect
     {
         IconId icon;
-        uint32_t sizeDip;
+        uint32_t widthDip;
+        uint32_t heightDip;
         ScreenRect rect;
     };
 
@@ -98,10 +99,12 @@ namespace
     struct Binding
     {
         IconId icon;
-        uint32_t sizeDip;
+        uint32_t widthDip;
+        uint32_t heightDip;
         winrt::weak_ref<wux::Controls::Image> image;
         double originalWidth;
         double originalHeight;
+        wux::Media::Stretch originalStretch;
         wux::FrameworkElement::DataContextChanged_revoker dataContextChanged;
     };
 
@@ -233,10 +236,12 @@ namespace
         {
             binding.dataContextChanged.revoke();
             // Leave the value alone if someone else changed it after us.
-            if (auto image = binding.image.get(); image && image.Width() == binding.sizeDip)
+            if (auto image = binding.image.get();
+                image && image.Width() == binding.widthDip && image.Height() == binding.heightDip)
             {
                 image.Width(binding.originalWidth);
                 image.Height(binding.originalHeight);
+                image.Stretch(binding.originalStretch);
             }
         }
 
@@ -300,21 +305,26 @@ namespace
                     binding.image = winrt::make_weak(image);
                     binding.originalWidth = image.Width();
                     binding.originalHeight = image.Height();
+                    binding.originalStretch = image.Stretch();
                     // A recycled container now shows another icon: undo at once, re-match later.
                     binding.dataContextChanged = match->DataContextChanged(winrt::auto_revoke,
                         [self = get_weak(), weakImage = winrt::make_weak(image)](auto&&, auto&&)
                         {
                             if (auto tap = self.get()) tap->OnDataContextChanged(weakImage);
                         });
-                    Log(L"matched %llx:%u guid=%u -> %u dip", rule.icon.hwnd, rule.icon.uid, rule.icon.hasGuid,
-                        rule.sizeDip);
+                    Log(L"matched %llx:%u guid=%u -> %ux%u dip", rule.icon.hwnd, rule.icon.uid, rule.icon.hasGuid,
+                        rule.widthDip, rule.heightDip);
                 }
-                binding.sizeDip = rule.sizeDip;
-                if (image.Width() != rule.sizeDip || image.Height() != rule.sizeDip)
+                binding.widthDip = rule.widthDip;
+                binding.heightDip = rule.heightDip;
+                if (image.Width() != rule.widthDip || image.Height() != rule.heightDip)
                 {
-                    image.Width(rule.sizeDip);
-                    image.Height(rule.sizeDip);
+                    image.Width(rule.widthDip);
+                    image.Height(rule.heightDip);
                 }
+                // The square icon bitmap must fill a non-square box instead of being letterboxed.
+                auto stretch = rule.widthDip == rule.heightDip ? binding.originalStretch : wux::Media::Stretch::Fill;
+                if (image.Stretch() != stretch) image.Stretch(stretch);
                 next.push_back(std::move(binding));
             }
             for (auto& stale : m_bindings)
@@ -405,7 +415,7 @@ namespace
                     RECT rect{};
                     // Hidden (overflow) or unknown icons fail here and stay untouched.
                     if (SUCCEEDED(Shell_NotifyIconGetRect(&id, &rect)))
-                        rules.push_back({ rule.icon, rule.sizeDip, { rect.left, rect.top, rect.right, rect.bottom } });
+                        rules.push_back({ rule.icon, rule.widthDip, rule.heightDip, { rect.left, rect.top, rect.right, rect.bottom } });
                 }
                 Dispatch(std::move(rules));
             }
