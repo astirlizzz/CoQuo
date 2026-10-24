@@ -11,7 +11,8 @@ namespace CoQuo;
 internal static class ClaudeUsageClient
 {
     private static readonly Uri UsageUri = new("https://api.anthropic.com/api/oauth/usage");
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
+    private static readonly HttpClient Http = new() { Timeout = RequestTimeout };
 
     private static string CredentialsPath
     {
@@ -32,15 +33,32 @@ internal static class ClaudeUsageClient
         request.Headers.UserAgent.ParseAdd("CoQuo/0.1.0");
         request.Headers.Accept.ParseAdd("application/json");
 
-        using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        // Status code only: the body is not echoed into UI error text.
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException((int)response.StatusCode == 401
-                ? "Claude token rejected (401) — open Claude Code"
-                : $"Claude usage HTTP {(int)response.StatusCode}");
-        await using var body = await response.Content.ReadAsStreamAsync(ct);
-        using var document = await JsonDocument.ParseAsync(body, cancellationToken: ct);
-        return document.RootElement.Clone();
+        // HttpClient.Timeout stops at the headers; a stalled body (e.g. across sleep) would hang the poll forever.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(RequestTimeout);
+        try
+        {
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            // Status code only: the body is not echoed into UI error text.
+            if ((int)response.StatusCode == 429)
+            {
+                var retryAfter = response.Headers.RetryAfter is { } header
+                    ? header.Delta ?? (header.Date is { } date ? date - DateTimeOffset.UtcNow : null)
+                    : null;
+                throw new RateLimitedException("Claude usage HTTP 429", retryAfter);
+            }
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException((int)response.StatusCode == 401
+                    ? "Claude token rejected (401) — open Claude Code"
+                    : $"Claude usage HTTP {(int)response.StatusCode}");
+            await using var body = await response.Content.ReadAsStreamAsync(timeout.Token);
+            using var document = await JsonDocument.ParseAsync(body, cancellationToken: timeout.Token);
+            return document.RootElement.Clone();
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException("Claude usage request timed out");
+        }
     }
 
     private static async Task<string> ReadAccessTokenAsync(CancellationToken ct)

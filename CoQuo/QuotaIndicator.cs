@@ -5,6 +5,12 @@ namespace CoQuo;
 /// <summary>Thrown when a reading cannot be attempted locally (no request sent); retried at the normal pace.</summary>
 internal sealed class SourceUnavailableException(string message) : Exception(message);
 
+/// <summary>The server answered 429; RetryAfter is its Retry-After header when present.</summary>
+internal sealed class RateLimitedException(string message, TimeSpan? retryAfter) : HttpRequestException(message)
+{
+    public TimeSpan? RetryAfter { get; } = retryAfter;
+}
+
 /// <summary>
 /// One tray icon plus its menu rows for a single quota source: polling schedule, backoff and stale state.
 /// </summary>
@@ -149,10 +155,15 @@ internal sealed class QuotaIndicator : IDisposable
             _lastError = ex.Message;
             _failures++;
             // Network/server trouble: 30s, 60s, 120s ... capped at 15m.
-            // Respect 429 and other overload responses instead of repeatedly retrying.
+            // Respect 429 and other overload responses instead of repeatedly retrying:
+            // the server's Retry-After (kept within 1 min..1 h) or else 15 minutes.
             var backoff = Math.Min(900, 30 * (int)Math.Pow(2, Math.Min(5, _failures - 1)));
-            if (_lastError.Contains("429", StringComparison.OrdinalIgnoreCase) ||
-                _lastError.Contains("too many requests", StringComparison.OrdinalIgnoreCase))
+            if (ex is RateLimitedException { RetryAfter: { } retryAfter })
+                _rateLimitedUntilUtc = DateTimeOffset.UtcNow +
+                    TimeSpan.FromSeconds(Math.Clamp(retryAfter.TotalSeconds, 60, 3600));
+            else if (ex is RateLimitedException ||
+                     _lastError.Contains("429", StringComparison.OrdinalIgnoreCase) ||
+                     _lastError.Contains("too many requests", StringComparison.OrdinalIgnoreCase))
                 _rateLimitedUntilUtc = DateTimeOffset.UtcNow.AddMinutes(15);
             _nextPollUtc = DateTimeOffset.UtcNow.AddSeconds(Math.Max(IntervalSeconds, backoff));
             if (_nextPollUtc < _rateLimitedUntilUtc) _nextPollUtc = _rateLimitedUntilUtc;
@@ -209,10 +220,20 @@ internal sealed class QuotaIndicator : IDisposable
             (stale ? " (STALE)" : "");
         _reset.Text = _lastUsage?.ResetAt is { } reset ?
             $"Resets: {reset.ToLocalTime():ddd, dd MMM HH:mm}{Until(reset)}" : "Resets: unknown";
-        _updated.Text = _lastError is not null ? $"Error: {Shorten(_lastError, 80)}" :
+        var retry = RetryText();
+        _updated.Text = _lastError is not null ? $"Error: {Shorten(_lastError, 80)}{retry}" :
             _lastSuccessUtc is { } updated ? $"Updated: {updated.ToLocalTime():HH:mm:ss}" : "Updated: never";
-        _tray.Text = Shorten(_lastUsage is null ? $"CoQuo: {_shortTitle} unavailable" :
-            $"CoQuo: {value}% {_shortTitle} left" + (stale ? " (stale)" : ""), 63);
+        var headline = _lastUsage is null ? $"CoQuo: {_shortTitle} unavailable" :
+            $"CoQuo: {value}% {_shortTitle} left" + (stale ? " (stale)" : "");
+        // The reason sits in the tooltip too, so a gray icon explains itself on hover.
+        _tray.Text = Shorten(_lastError is null ? headline : $"{headline}\n{Shorten(_lastError, 60)}{retry}", 127);
+    }
+
+    private string RetryText()
+    {
+        if (_lastError is null || _busy) return "";
+        var next = _nextPollUtc > _rateLimitedUntilUtc ? _nextPollUtc : _rateLimitedUntilUtc;
+        return next > DateTimeOffset.UtcNow ? $" (retry {next.ToLocalTime():HH:mm})" : "";
     }
 
     private static string Until(DateTimeOffset reset)
