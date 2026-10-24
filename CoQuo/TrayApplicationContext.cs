@@ -7,8 +7,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private readonly ContextMenuStrip _menu;
     private readonly ToolStripMenuItem _refresh;
-    private readonly ToolStripMenuItem _showCodex;
-    private readonly ToolStripMenuItem _showClaude;
     private readonly ToolStripMenuItem _autostart;
     private readonly Dictionary<int, ToolStripMenuItem> _intervals = new();
     private readonly Dictionary<int, ToolStripMenuItem> _iconSizes = new();
@@ -29,11 +27,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _ = _dispatcher.Handle; // invoke target even though the app has no visible window
 
         _menu = new ContextMenuStrip();
-        _codex = new QuotaIndicator("Codex weekly", "Codex weekly", IconProvider.Codex, ReadCodexAsync,
+        _codex = new QuotaIndicator("Codex", WindowOf(_settings.CodexDisplay, QuotaWindow.Weekly), IconProvider.Codex,
+            ReadCodexAsync,
             // An RPC or broken pipe may poison this subprocess; restart on next poll.
             onFailure: () => _exiting ? Task.CompletedTask : _client.StopAsync(),
             minIntervalSeconds: 0, () => _settings.RefreshSeconds, _menu, _lifetime.Token);
-        _claude = new QuotaIndicator("Claude 5-hour", "Claude 5h", IconProvider.Claude, ReadClaudeAsync,
+        _claude = new QuotaIndicator("Claude", WindowOf(_settings.ClaudeDisplay, QuotaWindow.FiveHour),
+            IconProvider.Claude, ReadClaudeAsync,
             onFailure: null, ClaudeMinIntervalSeconds, () => _settings.RefreshSeconds, _menu, _lifetime.Token);
 
         _refresh = new ToolStripMenuItem("Refresh now", null, (_, _) =>
@@ -66,8 +66,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             iconSizes.DropDownItems.Add(option);
         }
         iconSizes.DropDownItems.Add(_iconSizeStatus);
-        _showCodex = new ToolStripMenuItem("Show Codex icon", null, (_, _) => ToggleIndicator(codex: true));
-        _showClaude = new ToolStripMenuItem("Show Claude icon", null, (_, _) => ToggleIndicator(codex: false));
+        var codexDisplay = DisplayMenu("Codex", _codex, codex: true);
+        var claudeDisplay = DisplayMenu("Claude", _claude, codex: false);
         _autostart = new ToolStripMenuItem("Start with Windows")
         {
             Checked = Settings.IsAutoStartEnabled()
@@ -78,15 +78,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _menu.Items.AddRange(_claude.MenuItems);
         _menu.Items.AddRange(new ToolStripItem[]
         {
-            _refresh, intervals, _showCodex, _showClaude, iconSizes, _autostart, new ToolStripSeparator(),
+            _refresh, intervals, codexDisplay, claudeDisplay, iconSizes, _autostart, new ToolStripSeparator(),
             new ToolStripMenuItem("Exit CoQuo", null, (_, _) => ExitThread())
         });
         _menu.Opening += (_, _) => UpdateUi();
 
         _codex.IconSize = _claude.IconSize = _settings.IconSize;
-        _codex.Enabled = _settings.ShowCodex;
-        _claude.Enabled = _settings.ShowClaude;
-        UpdateToggles();
+        _codex.Enabled = _settings.CodexDisplay != TrayDisplay.Hidden;
+        _claude.Enabled = _settings.ClaudeDisplay != TrayDisplay.Hidden;
 
         _client.RateLimitsUpdated += OnLimitsUpdated;
         _timer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -100,7 +99,50 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _timer.Start(); // First poll starts on the message-loop thread, with WinForms SynchronizationContext.
     }
 
-    private async Task<QuotaUsage> ReadCodexAsync(CancellationToken ct)
+    private static QuotaWindow WindowOf(TrayDisplay display, QuotaWindow fallback) => display switch
+    {
+        TrayDisplay.FiveHour => QuotaWindow.FiveHour,
+        TrayDisplay.Weekly => QuotaWindow.Weekly,
+        _ => fallback
+    };
+
+    // "Codex ▸ 5-hour limit / Weekly limit / Hide"; a window the last response lacked is grayed.
+    private ToolStripMenuItem DisplayMenu(string name, QuotaIndicator indicator, bool codex)
+    {
+        var menu = new ToolStripMenuItem(name);
+        var fiveHour = new ToolStripMenuItem("5-hour limit", null, (_, _) => ChangeDisplay(codex, TrayDisplay.FiveHour));
+        var weekly = new ToolStripMenuItem("Weekly limit", null, (_, _) => ChangeDisplay(codex, TrayDisplay.Weekly));
+        var hide = new ToolStripMenuItem("Hide", null, (_, _) => ChangeDisplay(codex, TrayDisplay.Hidden));
+        menu.DropDownItems.AddRange(new ToolStripItem[] { fiveHour, weekly, new ToolStripSeparator(), hide });
+        menu.DropDownOpening += (_, _) =>
+        {
+            var current = codex ? _settings.CodexDisplay : _settings.ClaudeDisplay;
+            var other = codex ? _settings.ClaudeDisplay : _settings.CodexDisplay;
+            fiveHour.Checked = current == TrayDisplay.FiveHour;
+            weekly.Checked = current == TrayDisplay.Weekly;
+            hide.Checked = current == TrayDisplay.Hidden;
+            // Unknown before the first reading, so only a confirmed absence grays an option.
+            fiveHour.Enabled = indicator.Reports(QuotaWindow.FiveHour) != false;
+            weekly.Enabled = indicator.Reports(QuotaWindow.Weekly) != false;
+            // The last visible icon carries the menu, so it cannot be hidden.
+            hide.Enabled = other != TrayDisplay.Hidden;
+        };
+        return menu;
+    }
+
+    private void ChangeDisplay(bool codex, TrayDisplay display)
+    {
+        var indicator = codex ? _codex : _claude;
+        if (codex) _settings.CodexDisplay = display;
+        else _settings.ClaudeDisplay = display;
+        indicator.Window = WindowOf(display, indicator.Window);
+        indicator.Enabled = display != TrayDisplay.Hidden;
+        // Do not keep a codex app-server running when nobody looks at its numbers.
+        if (codex && display == TrayDisplay.Hidden && !_codex.IsBusy) _ = _client.StopAsync();
+        SaveSettings();
+    }
+
+    private async Task<QuotaReading> ReadCodexAsync(CancellationToken ct)
     {
         System.Text.Json.JsonElement response;
         try
@@ -111,19 +153,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
         finally
         {
             // The icon may have been hidden while this read was in flight.
-            if (!_settings.ShowCodex && !_exiting) await _client.StopAsync();
+            if (_settings.CodexDisplay == TrayDisplay.Hidden && !_exiting) await _client.StopAsync();
         }
-        if (!UsageParser.TryParse(response, out var usage) || usage is null)
-            throw new FormatException("Weekly (7-day) quota missing in the Codex response");
-        return usage;
+        if (!UsageParser.TryParse(response, out var reading) || reading is null)
+            throw new FormatException("No 5-hour or weekly quota in the Codex response");
+        return reading;
     }
 
-    private static async Task<QuotaUsage> ReadClaudeAsync(CancellationToken ct)
+    private static async Task<QuotaReading> ReadClaudeAsync(CancellationToken ct)
     {
         var response = await ClaudeUsageClient.ReadUsageAsync(ct);
-        if (!ClaudeUsageParser.TryParse(response, out var usage) || usage is null)
-            throw new FormatException("5-hour quota missing in the Claude response");
-        return usage;
+        if (!ClaudeUsageParser.TryParse(response, out var reading) || reading is null)
+            throw new FormatException("No 5-hour or weekly quota in the Claude response");
+        return reading;
     }
 
     private void OnLimitsUpdated(System.Text.Json.JsonElement parameters)
@@ -132,7 +174,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
         try
         {
             if (_dispatcher.IsHandleCreated && !_dispatcher.IsDisposed)
-                _dispatcher.BeginInvoke((MethodInvoker)(() => { if (!_exiting) _codex.AcceptUsage(parsed); }));
+                _dispatcher.BeginInvoke((MethodInvoker)(() =>
+                {
+                    if (!_exiting) _codex.AcceptReading(parsed, partial: true);
+                }));
         }
         catch (ObjectDisposedException) { /* shutdown */ }
         catch (InvalidOperationException) { /* shutdown */ }
@@ -153,27 +198,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         foreach (var item in _iconSizes) item.Value.Checked = item.Key == size;
         _codex.IconSize = _claude.IconSize = size;
         SaveSettings();
-    }
-
-    private void ToggleIndicator(bool codex)
-    {
-        if (codex) _settings.ShowCodex = !_settings.ShowCodex;
-        else _settings.ShowClaude = !_settings.ShowClaude;
-        _codex.Enabled = _settings.ShowCodex;
-        _claude.Enabled = _settings.ShowClaude;
-        // Do not keep a codex app-server running when nobody looks at its numbers.
-        if (!_settings.ShowCodex && !_codex.IsBusy) _ = _client.StopAsync();
-        UpdateToggles();
-        SaveSettings();
-    }
-
-    private void UpdateToggles()
-    {
-        _showCodex.Checked = _settings.ShowCodex;
-        _showClaude.Checked = _settings.ShowClaude;
-        // The last visible icon carries the menu, so it cannot be hidden.
-        _showCodex.Enabled = !_settings.ShowCodex || _settings.ShowClaude;
-        _showClaude.Enabled = !_settings.ShowClaude || _settings.ShowCodex;
     }
 
     private void SaveSettings()

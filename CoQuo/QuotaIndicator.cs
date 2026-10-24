@@ -16,10 +16,9 @@ internal sealed class RateLimitedException(string message, TimeSpan? retryAfter)
 /// </summary>
 internal sealed class QuotaIndicator : IDisposable
 {
-    private readonly string _title;
-    private readonly string _shortTitle;
+    private readonly string _name;
     private readonly IconProvider _provider;
-    private readonly Func<CancellationToken, Task<QuotaUsage>> _fetch;
+    private readonly Func<CancellationToken, Task<QuotaReading>> _fetch;
     private readonly Func<Task>? _onFailure;
     private readonly int _minIntervalSeconds;
     private readonly Func<int> _refreshSeconds;
@@ -29,7 +28,8 @@ internal sealed class QuotaIndicator : IDisposable
     private readonly ToolStripMenuItem _reset;
     private readonly ToolStripMenuItem _updated;
     private readonly ToolStripSeparator _separator = new();
-    private QuotaUsage? _lastUsage;
+    private QuotaWindow _window;
+    private QuotaReading? _lastReading;
     private DateTimeOffset? _lastSuccessUtc;
     private DateTimeOffset _nextPollUtc = DateTimeOffset.MinValue;
     private DateTimeOffset _lastAttemptUtc = DateTimeOffset.MinValue;
@@ -42,29 +42,49 @@ internal sealed class QuotaIndicator : IDisposable
     private int? _displayedValue;
     private bool _displayedStale = true;
 
-    public QuotaIndicator(string title, string shortTitle, IconProvider provider,
-        Func<CancellationToken, Task<QuotaUsage>> fetch, Func<Task>? onFailure,
+    public QuotaIndicator(string name, QuotaWindow window, IconProvider provider,
+        Func<CancellationToken, Task<QuotaReading>> fetch, Func<Task>? onFailure,
         int minIntervalSeconds, Func<int> refreshSeconds, ContextMenuStrip menu, CancellationToken lifetime)
     {
-        _title = title;
-        _shortTitle = shortTitle;
+        _name = name;
+        _window = window;
         _provider = provider;
         _fetch = fetch;
         _onFailure = onFailure;
         _minIntervalSeconds = minIntervalSeconds;
         _refreshSeconds = refreshSeconds;
         _lifetime = lifetime;
-        _value = new ToolStripMenuItem($"{title}: —") { Enabled = false };
+        _value = new ToolStripMenuItem($"{Title}: —") { Enabled = false };
         _reset = new ToolStripMenuItem("Resets: —") { Enabled = false };
         _updated = new ToolStripMenuItem("Updated: —") { Enabled = false };
         _tray = new NotifyIcon
         {
             Icon = TrayIconPainter.Create(null, stale: true, provider),
-            Text = $"CoQuo {shortTitle} — starting",
+            Text = $"CoQuo {ShortTitle} — starting",
             ContextMenuStrip = menu
         };
         _tray.DoubleClick += (_, _) => RequestManualRefresh();
     }
+
+    private string Title => $"{_name} {(_window == QuotaWindow.FiveHour ? "5-hour" : "weekly")}";
+    private string ShortTitle => $"{_name} {(_window == QuotaWindow.FiveHour ? "5h" : "weekly")}";
+    private QuotaUsage? Usage => _lastReading?[_window];
+
+    /// <summary>Which window the icon shows; served from the last reading without a new request.</summary>
+    public QuotaWindow Window
+    {
+        get => _window;
+        set
+        {
+            if (_window == value) return;
+            _window = value;
+            _displayedValue = int.MinValue; // repaint even if both windows show the same number
+            UpdateUi();
+        }
+    }
+
+    /// <summary>Whether the last reading contained the window; null before the first reading.</summary>
+    public bool? Reports(QuotaWindow window) => _lastReading is null ? null : _lastReading[window] is not null;
 
     /// <summary>Status rows plus a trailing separator, for the shared context menu.</summary>
     public ToolStripItem[] MenuItems => new ToolStripItem[] { _value, _reset, _updated, _separator };
@@ -80,7 +100,10 @@ internal sealed class QuotaIndicator : IDisposable
             _enabled = value;
             _tray.Visible = value;
             foreach (var item in MenuItems) item.Visible = value;
-            if (value) _nextPollUtc = DateTimeOffset.MinValue;
+            // Shown again: reuse a reading that is still within the interval instead of asking anew.
+            if (value && (_lastSuccessUtc is null ||
+                          DateTimeOffset.UtcNow - _lastSuccessUtc > TimeSpan.FromSeconds(IntervalSeconds)))
+                _nextPollUtc = DateTimeOffset.MinValue;
             ApplyIconSize();
             UpdateUi();
         }
@@ -120,10 +143,11 @@ internal sealed class QuotaIndicator : IDisposable
             _ = PollAsync();
     }
 
-    public void AcceptUsage(QuotaUsage usage)
+    /// <param name="partial">A notification that may omit windows: keep the earlier values for those.</param>
+    public void AcceptReading(QuotaReading reading, bool partial = false)
     {
         if (_disposed || !_enabled) return;
-        _lastUsage = usage;
+        _lastReading = partial ? reading.Over(_lastReading) : reading;
         _lastSuccessUtc = DateTimeOffset.UtcNow;
         _lastError = null;
         _failures = 0;
@@ -142,7 +166,7 @@ internal sealed class QuotaIndicator : IDisposable
         _nextPollUtc = now.AddSeconds(IntervalSeconds);
         try
         {
-            AcceptUsage(await _fetch(_lifetime));
+            AcceptReading(await _fetch(_lifetime));
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (SourceUnavailableException ex)
@@ -195,8 +219,8 @@ internal sealed class QuotaIndicator : IDisposable
 
     private bool IsStale()
     {
-        if (_lastUsage is null || _lastSuccessUtc is null || _lastError is not null) return true;
-        if (_lastUsage.ResetAt is { } reset && DateTimeOffset.UtcNow >= reset) return true;
+        if (Usage is not { } usage || _lastSuccessUtc is null || _lastError is not null) return true;
+        if (usage.ResetAt is { } reset && DateTimeOffset.UtcNow >= reset) return true;
         return DateTimeOffset.UtcNow - _lastSuccessUtc >
                TimeSpan.FromSeconds(Math.Max(180, IntervalSeconds * 2 + 30));
     }
@@ -204,7 +228,8 @@ internal sealed class QuotaIndicator : IDisposable
     public void UpdateUi()
     {
         if (_disposed || !_enabled) return;
-        var value = _lastUsage?.RoundedRemaining;
+        var usage = Usage;
+        var value = usage?.RoundedRemaining;
         var stale = IsStale();
         if (value != _displayedValue || stale != _displayedStale)
         {
@@ -215,16 +240,18 @@ internal sealed class QuotaIndicator : IDisposable
             _displayedValue = value;
             _displayedStale = stale;
         }
-        _value.Text = _lastUsage is null ? $"{_title}: unavailable" :
-            $"{_title}: {_lastUsage.RemainingPercent.ToString("0.#", CultureInfo.InvariantCulture)}% left" +
+        // A reading without this window means the account has no such limit (e.g. Codex without 5-hour).
+        var missing = usage is null && _lastReading is not null ? "not reported" : "unavailable";
+        _value.Text = usage is null ? $"{Title}: {missing}" :
+            $"{Title}: {usage.RemainingPercent.ToString("0.#", CultureInfo.InvariantCulture)}% left" +
             (stale ? " (STALE)" : "");
-        _reset.Text = _lastUsage?.ResetAt is { } reset ?
+        _reset.Text = usage?.ResetAt is { } reset ?
             $"Resets: {reset.ToLocalTime():ddd, dd MMM HH:mm}{Until(reset)}" : "Resets: unknown";
         var retry = RetryText();
         _updated.Text = _lastError is not null ? $"Error: {Shorten(_lastError, 80)}{retry}" :
             _lastSuccessUtc is { } updated ? $"Updated: {updated.ToLocalTime():HH:mm:ss}" : "Updated: never";
-        var headline = _lastUsage is null ? $"CoQuo: {_shortTitle} unavailable" :
-            $"CoQuo: {value}% {_shortTitle} left" + (stale ? " (stale)" : "");
+        var headline = usage is null ? $"CoQuo: {ShortTitle} {missing}" :
+            $"CoQuo: {value}% {ShortTitle} left" + (stale ? " (stale)" : "");
         // The reason sits in the tooltip too, so a gray icon explains itself on hover.
         _tray.Text = Shorten(_lastError is null ? headline : $"{headline}\n{Shorten(_lastError, 60)}{retry}", 127);
     }

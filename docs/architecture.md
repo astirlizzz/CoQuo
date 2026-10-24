@@ -26,9 +26,10 @@ Windows draws every notification icon at 16 DIP and `Shell_NotifyIcon` has no si
 - `TrayApplicationContext` (WinForms message loop): shared menu, timer, settings, the Codex child process; owns two `QuotaIndicator`s.
 - `QuotaIndicator`: one tray icon and its menu rows for one source — in-memory last accepted reading, stale state, polling schedule, backoff, manual-refresh throttling. `SourceUnavailableException` (nothing sent, e.g. expired token) retries at the normal pace without escalating backoff.
 - `CodexAppServerClient`: owns one child `codex app-server` process, implements newline-delimited JSON-RPC request correlation and notification handling; stdout/stderr drained, no credential access. Stopped while the Codex icon is hidden.
-- `UsageParser`: selects `rateLimitsByLimitId.codex` (or legacy `rateLimits`) and finds the **10080-minute** window by duration, not primary/secondary position. Ignores other buckets. Returns no number when weekly data missing.
+- `UsageParser`: selects `rateLimitsByLimitId.codex` (or legacy `rateLimits`) and finds the **300-minute** and **10080-minute** windows by duration, not primary/secondary position, into one `QuotaReading`. Ignores other buckets and durations. Notifications are merged over the previous reading, since they may carry one window only.
+- Displayed window (added 2026-10-24): each indicator shows one window of its last `QuotaReading` (`CodexDisplay` / `ClaudeDisplay` settings, or hidden). Switching only redraws; a window absent from the last reading shows as "not reported" and is grayed in the menu.
 - `ClaudeUsageClient`: re-reads `claudeAiOauth.accessToken` from `.credentials.json` (`CLAUDE_CONFIG_DIR` honored) for each request, refuses locally when `expiresAt` has passed, reports only HTTP status codes in errors.
-- `ClaudeUsageParser`: `five_hour.utilization` (percent used; >100 clamps to 0 remaining) and optional ISO `resets_at`.
+- `ClaudeUsageParser`: `five_hour` and `seven_day` `utilization` (percent used; >100 clamps to 0 remaining) and optional ISO `resets_at`.
 - `Settings`: persist refresh interval and per-icon visibility (at least one stays visible). Startup registration optional via current-user Run key.
 - `TrayIconPainter`: same silhouette for both, traffic-light outline, gray for stale; the fill identifies the source (dark = Codex, terracotta with a dark gap ring = Claude). Digits in Bahnschrift SemiBold Condensed (Segoe UI Bold fallback) with a dark halo.
 

@@ -7,41 +7,59 @@ public sealed record QuotaUsage(double RemainingPercent, DateTimeOffset? ResetAt
     public int RoundedRemaining => (int)Math.Round(RemainingPercent, MidpointRounding.AwayFromZero);
 }
 
+public enum QuotaWindow { FiveHour, Weekly }
+
+/// <summary>Every window one response reported; switching the displayed window needs no new request.</summary>
+public sealed record QuotaReading(QuotaUsage? FiveHour, QuotaUsage? Weekly)
+{
+    public QuotaUsage? this[QuotaWindow window] => window == QuotaWindow.FiveHour ? FiveHour : Weekly;
+
+    public bool IsEmpty => FiveHour is null && Weekly is null;
+
+    /// <summary>For partial updates: windows missing here keep their earlier value.</summary>
+    public QuotaReading Over(QuotaReading? earlier) =>
+        earlier is null ? this : new QuotaReading(FiveHour ?? earlier.FiveHour, Weekly ?? earlier.Weekly);
+}
+
 public static class UsageParser
 {
     // Do not assume primary=5h and secondary=7d: the server may return only one window.
+    public const int FiveHourMinutes = 5 * 60;
     public const int WeeklyMinutes = 7 * 24 * 60;
 
-    public static bool TryParse(JsonElement json, out QuotaUsage? usage)
+    public static bool TryParse(JsonElement json, out QuotaReading? reading)
     {
-        usage = null;
+        reading = null;
         if (json.ValueKind != JsonValueKind.Object) return false;
 
         // Response shape: {rateLimitsByLimitId:{codex:{primary,secondary}},rateLimits:{...}}.
         // Notification shape: {rateLimits:{limitId:"codex",primary,secondary}}.
         if (TryGetObject(json, "rateLimitsByLimitId", out var byId) &&
             TryGetObject(byId, "codex", out var canonical) &&
-            TryFindWeekly(canonical, out usage)) return true;
+            TryFindWindows(canonical, out reading)) return true;
 
         if (TryGetObject(json, "rateLimits", out var limits) &&
             (!limits.TryGetProperty("limitId", out var id) ||
              (id.ValueKind == JsonValueKind.String && id.GetString() == "codex")) &&
-            TryFindWeekly(limits, out usage)) return true;
+            TryFindWindows(limits, out reading)) return true;
 
         // Some notifications deliver the bucket directly.
         return (!json.TryGetProperty("limitId", out var directId) ||
                 (directId.ValueKind == JsonValueKind.String && directId.GetString() == "codex")) &&
-               TryFindWeekly(json, out usage);
+               TryFindWindows(json, out reading);
     }
 
-    private static bool TryFindWeekly(JsonElement rateLimits, out QuotaUsage? usage)
+    // Windows are recognized by duration, whichever of primary/secondary carries them.
+    private static bool TryFindWindows(JsonElement rateLimits, out QuotaReading? reading)
     {
-        usage = null;
+        QuotaUsage? fiveHour = null, weekly = null;
         foreach (var key in new[] { "primary", "secondary" })
         {
-            if (!TryGetObject(rateLimits, key, out var window)) continue;
-            if (!TryNumber(window, "windowDurationMins", out var duration) ||
-                Math.Abs(duration - WeeklyMinutes) > 0.01) continue;
+            if (!TryGetObject(rateLimits, key, out var window) ||
+                !TryNumber(window, "windowDurationMins", out var duration)) continue;
+            bool isFiveHour = Math.Abs(duration - FiveHourMinutes) <= 0.01;
+            bool isWeekly = Math.Abs(duration - WeeklyMinutes) <= 0.01;
+            if (!isFiveHour && !isWeekly) continue;
             if (!TryNumber(window, "usedPercent", out var used) ||
                 !double.IsFinite(used) || used < 0 || used > 100) continue;
 
@@ -53,10 +71,12 @@ public static class UsageParser
                 catch (ArgumentOutOfRangeException) { /* unknown reset time */ }
             }
 
-            usage = new QuotaUsage(100 - used, reset, WeeklyMinutes);
-            return true;
+            var usage = new QuotaUsage(100 - used, reset, isWeekly ? WeeklyMinutes : FiveHourMinutes);
+            if (isWeekly) weekly ??= usage;
+            else fiveHour ??= usage;
         }
-        return false;
+        reading = fiveHour is null && weekly is null ? null : new QuotaReading(fiveHour, weekly);
+        return reading is not null;
     }
 
     private static bool TryGetObject(JsonElement parent, string key, out JsonElement child)

@@ -1,12 +1,13 @@
-# CoQuo — Codex weekly / Claude Code 5-hour remaining % for Windows
+# CoQuo — Codex / Claude Code remaining limits for Windows
 
 Minimal, Windows 11 notification-area-only monitor (WinForms + .NET 8).
 
 ## Behavior
 
-- Two independent tray icons, each can be hidden from the menu (the last visible one cannot):
-  - **Codex** — remaining weekly allowance, dark icon. Reads account-wide `codex` window of **10080 minutes** (7 days), regardless of whether it is `primary` or `secondary`.
-  - **Claude Code** — remaining **5-hour** session allowance, terracotta icon.
+- Two independent tray icons. For each, the menu (*Codex ▸* / *Claude ▸*) picks the **5-hour limit**, the **weekly limit**, or **Hide** (the last visible icon cannot be hidden). Defaults: Codex weekly, Claude 5-hour.
+  - **Codex** — dark icon. Reads the account-wide `codex` bucket and recognizes windows by duration (**300** / **10080** minutes), regardless of whether they are `primary` or `secondary`.
+  - **Claude Code** — terracotta icon; `five_hour` and `seven_day` windows.
+- Every reading keeps both windows, so switching between them redraws without a new request. A window the last response did not contain (e.g. no 5-hour limit on the Codex plan) is grayed out in the menu.
 - Both show a large numeral (a check mark at 100%); the outline is green / amber / red by remaining percent.
 - Tooltip and right-click menu contain percentage, reset time in local timezone, last update/error.
 - Changes icon to gray on errors, stale data, or after a scheduled reset until upstream confirms the new figure. Never fabricates 100% when a timer expires.
@@ -35,11 +36,11 @@ Builds the native TrayIconSize component (needs Visual Studio with C++ tools and
 ## UI
 
 - Single-click tray icon: standard Windows behavior; hover for usage.
-- Right-click (either icon): Codex weekly and Claude 5-hour remaining percent, reset time, last update/error; refresh; polling interval; show/hide each icon; start with Windows; exit.
+- Right-click (either icon): remaining percent of each shown limit, reset time, last update/error; refresh; polling interval; limit to show per service; icon size; start with Windows; exit.
 - **Icon size** (Standard / 20 / 24 / 28 / 32 px): draws CoQuo's icons larger than the Windows 16 px through the bundled [TrayIconSize](TrayIconSize/README.md) component, which modifies Explorer's taskbar XAML. Standard does not load anything into Explorer. Needs `TrayIconSizeClient.dll`, `TrayIconSizeHost.exe` and `TrayIconSizeHook.dll` next to `CoQuo.exe`.
 - Double-click an icon: refresh that source (with 15-second minimum between actual requests).
 - Startup uses the current user's `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run` key; no UAC. Recommended to enable after publishing, not while using `dotnet run`.
-- Refresh interval, icon visibility (`ShowCodex`, `ShowClaude`) and `IconSize` saved in `%LOCALAPPDATA%\\CoQuo\\settings.json`.
+- Refresh interval, shown limit (`CodexDisplay`, `ClaudeDisplay`: `FiveHour` / `Weekly` / `Hidden`; the older `ShowCodex`/`ShowClaude` flags are migrated) and `IconSize` saved in `%LOCALAPPDATA%\\CoQuo\\settings.json`.
 
 ## Security & rate-limit policy
 

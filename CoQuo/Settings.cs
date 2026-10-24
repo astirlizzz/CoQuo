@@ -1,14 +1,24 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Win32;
 
 namespace CoQuo;
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
+internal enum TrayDisplay { FiveHour, Weekly, Hidden }
+
 internal sealed class Settings
 {
     public int RefreshSeconds { get; set; } = 60;
-    public bool ShowCodex { get; set; } = true;
-    public bool ShowClaude { get; set; } = true;
+    public TrayDisplay CodexDisplay { get; set; } = TrayDisplay.Weekly;
+    public TrayDisplay ClaudeDisplay { get; set; } = TrayDisplay.FiveHour;
     public int IconSize { get; set; } = 16;
+
+    // Show/hide flags of earlier versions: read once to migrate, never written back.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ShowCodex { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ShowClaude { get; set; }
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -23,8 +33,14 @@ internal sealed class Settings
                 var result = JsonSerializer.Deserialize<Settings>(File.ReadAllText(SettingsPath));
                 if (result is not null && result.RefreshSeconds is 60 or 120 or 300 or 600)
                 {
+                    if (result.ShowCodex == false) result.CodexDisplay = TrayDisplay.Hidden;
+                    if (result.ShowClaude == false) result.ClaudeDisplay = TrayDisplay.Hidden;
+                    result.ShowCodex = result.ShowClaude = null;
+                    if (!Enum.IsDefined(result.CodexDisplay)) result.CodexDisplay = TrayDisplay.Weekly;
+                    if (!Enum.IsDefined(result.ClaudeDisplay)) result.ClaudeDisplay = TrayDisplay.FiveHour;
                     // At least one icon must stay visible: it is the only way to reach the menu.
-                    if (!result.ShowCodex && !result.ShowClaude) result.ShowCodex = true;
+                    if (result.CodexDisplay == TrayDisplay.Hidden && result.ClaudeDisplay == TrayDisplay.Hidden)
+                        result.CodexDisplay = TrayDisplay.Weekly;
                     if (result.IconSize is not (16 or 20 or 24 or 28 or 32)) result.IconSize = 16;
                     return result;
                 }
