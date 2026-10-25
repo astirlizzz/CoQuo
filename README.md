@@ -15,6 +15,8 @@ Minimal, Windows 11 notification-area-only monitor (WinForms + .NET 8).
 - Codex: receives `account/rateLimits/updated` from the local Codex app-server; also polls `account/rateLimits/read` every **60 seconds by default** (configurable 1, 2, 5, 10 minutes). Hiding the Codex icon stops the app-server child process.
 - Claude: polls the Claude Code usage endpoint at the same interval but **never more often than every 2 minutes**.
 - Backoff on errors up to 15 minutes; manual refresh throttled to 15 seconds. No periodic timer requests beyond the configured interval.
+- Log `%LOCALAPPDATA%\CoQuo\coquo.log` (never holds tokens or responses): only warnings and errors by default, a repeated identical failure is logged once. Start with `CoQuo.exe --verbose` (or set `"LogLevel": "Verbose"` in `settings.json`; values `Verbose`, `Info`, `Warning`, `Error`) to also record every poll and session lock/unlock. Capped at 2 × 512 KB (`coquo.log` and `coquo.log.1`).
+- No scheduled requests while the session is locked (Win+L) or a remote session is disconnected; on unlock a reading older than the interval is refreshed at once.
 - No browser scraping, API key, saved credentials, admin rights, or server-side changes. The only token access is the read-only Claude Code token described below.
 
 ## Prerequisites
@@ -76,6 +78,6 @@ The project was authored in a Linux sandbox where the .NET SDK and Windows tray 
 ## Possible next changes
 
 - Claude 7-day windows (`seven_day`, `seven_day_opus`) as optional extra indicators.
-- Monitor actual session activity to dynamically slow polling when inactive.
-- Add proper logging stripped of secrets and the option to export diagnostics.
+- Slow polling down when the user is idle but the session is not locked.
+- Option to export diagnostics.
 - Accessibility enhancement: high contrast 16px icon testing at 100–200% DPI.

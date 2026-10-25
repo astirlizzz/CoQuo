@@ -13,6 +13,7 @@ internal sealed class Settings
     public TrayDisplay CodexDisplay { get; set; } = TrayDisplay.Weekly;
     public TrayDisplay ClaudeDisplay { get; set; } = TrayDisplay.FiveHour;
     public int IconSize { get; set; } = 16;
+    public LogLevel LogLevel { get; set; } = LogLevel.Warning;
 
     // Show/hide flags of earlier versions: read once to migrate, never written back.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -42,6 +43,7 @@ internal sealed class Settings
                     if (result.CodexDisplay == TrayDisplay.Hidden && result.ClaudeDisplay == TrayDisplay.Hidden)
                         result.CodexDisplay = TrayDisplay.Weekly;
                     if (result.IconSize is not (16 or 20 or 24 or 28 or 32)) result.IconSize = 16;
+                    if (!Enum.IsDefined(result.LogLevel)) result.LogLevel = LogLevel.Warning;
                     return result;
                 }
             }

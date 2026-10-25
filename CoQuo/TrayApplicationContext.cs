@@ -1,3 +1,5 @@
+using Microsoft.Win32;
+
 namespace CoQuo;
 
 internal sealed class TrayApplicationContext : ApplicationContext
@@ -23,6 +25,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     public TrayApplicationContext()
     {
         _settings = Settings.Load();
+        Log.Level = (LogLevel)Math.Min((int)Log.Level, (int)_settings.LogLevel);
+        Log.Write(LogLevel.Info, $"Started, log level {Log.Level}, refresh {_settings.RefreshSeconds}s");
         _dispatcher = new Control();
         _ = _dispatcher.Handle; // invoke target even though the app has no visible window
 
@@ -88,6 +92,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _claude.Enabled = _settings.ClaudeDisplay != TrayDisplay.Hidden;
 
         _client.RateLimitsUpdated += OnLimitsUpdated;
+        SystemEvents.SessionSwitch += OnSessionSwitch;
         _timer = new System.Windows.Forms.Timer { Interval = 1000 };
         _timer.Tick += (_, _) =>
         {
@@ -168,6 +173,33 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return reading;
     }
 
+    // Nobody is looking at a locked session (Win+L, or disconnected remote session): stop scheduled requests.
+    private void OnSessionSwitch(object? sender, SessionSwitchEventArgs e)
+    {
+        bool? paused = e.Reason switch
+        {
+            SessionSwitchReason.SessionLock or SessionSwitchReason.ConsoleDisconnect
+                or SessionSwitchReason.RemoteDisconnect => true,
+            SessionSwitchReason.SessionUnlock or SessionSwitchReason.ConsoleConnect
+                or SessionSwitchReason.RemoteConnect => false,
+            _ => null
+        };
+        if (paused is not { } value) return;
+        try
+        {
+            // SystemEvents raises on its own thread.
+            if (_dispatcher.IsHandleCreated && !_dispatcher.IsDisposed)
+                _dispatcher.BeginInvoke((MethodInvoker)(() =>
+                {
+                    if (_exiting) return;
+                    Log.Write(LogLevel.Info, $"Session {e.Reason}: polling {(value ? "paused" : "resumed")}");
+                    _codex.Paused = _claude.Paused = value;
+                }));
+        }
+        catch (ObjectDisposedException) { /* shutdown */ }
+        catch (InvalidOperationException) { /* shutdown */ }
+    }
+
     private void OnLimitsUpdated(System.Text.Json.JsonElement parameters)
     {
         if (!UsageParser.TryParse(parameters, out var parsed) || parsed is null) return;
@@ -176,7 +208,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (_dispatcher.IsHandleCreated && !_dispatcher.IsDisposed)
                 _dispatcher.BeginInvoke((MethodInvoker)(() =>
                 {
-                    if (!_exiting) _codex.AcceptReading(parsed, partial: true);
+                    if (_exiting) return;
+                    Log.Write(LogLevel.Verbose, "Codex: rate limits notification");
+                    _codex.AcceptReading(parsed, partial: true);
                 }));
         }
         catch (ObjectDisposedException) { /* shutdown */ }
@@ -236,6 +270,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     protected override void ExitThreadCore()
     {
         _exiting = true;
+        SystemEvents.SessionSwitch -= OnSessionSwitch;
         _timer.Stop();
         _lifetime.Cancel();
         _codex.Dispose();

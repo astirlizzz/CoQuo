@@ -101,12 +101,30 @@ internal sealed class QuotaIndicator : IDisposable
             _enabled = value;
             _tray.Visible = value;
             foreach (var item in MenuItems) item.Visible = value;
-            // Shown again: reuse a reading that is still within the interval instead of asking anew.
-            if (value && (_lastSuccessUtc is null ||
-                          DateTimeOffset.UtcNow - _lastSuccessUtc > TimeSpan.FromSeconds(IntervalSeconds)))
-                _nextPollUtc = DateTimeOffset.MinValue;
+            if (value) PollSoonIfOutdated();
             ApplyIconSize();
             UpdateUi();
+        }
+    }
+
+    // Shown again or resumed: reuse a reading that is still within the interval instead of asking anew.
+    private void PollSoonIfOutdated()
+    {
+        if (_lastSuccessUtc is null || DateTimeOffset.UtcNow - _lastSuccessUtc > TimeSpan.FromSeconds(IntervalSeconds))
+            _nextPollUtc = DateTimeOffset.MinValue;
+    }
+
+    private bool _paused;
+
+    /// <summary>No scheduled requests while true (locked session); resuming polls at once if the reading is outdated.</summary>
+    public bool Paused
+    {
+        get => _paused;
+        set
+        {
+            if (_disposed || _paused == value) return;
+            _paused = value;
+            if (!value) PollSoonIfOutdated();
         }
     }
 
@@ -161,7 +179,7 @@ internal sealed class QuotaIndicator : IDisposable
     {
         if (_disposed || !_enabled) return;
         UpdateUi();
-        if (!_busy && DateTimeOffset.UtcNow >= _nextPollUtc)
+        if (!_busy && !_paused && DateTimeOffset.UtcNow >= _nextPollUtc)
             _ = PollAsync();
     }
 
@@ -186,20 +204,27 @@ internal sealed class QuotaIndicator : IDisposable
         _busy = true;
         _lastAttemptUtc = now;
         _nextPollUtc = now.AddSeconds(IntervalSeconds);
+        Log.Write(LogLevel.Verbose, $"{_name}: poll");
         try
         {
             AcceptReading(await _fetch(_lifetime));
+            if (_lastLoggedError is not null) Log.Write(LogLevel.Info, $"{_name}: recovered");
+            _lastLoggedError = null;
+            Log.Write(LogLevel.Verbose, $"{_name}: poll ok");
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (SourceUnavailableException ex)
         {
             // Nothing reached the server; check again at the normal pace without escalating backoff.
             _lastError = ex.Message;
+            LogFailure(LogLevel.Warning, $"{_name}: not attempted: {ex.Message}", ex.Message);
         }
         catch (Exception ex)
         {
             _lastError = ex.Message;
             _failures++;
+            LogFailure(ex is HttpRequestException or TimeoutException or IOException ? LogLevel.Warning : LogLevel.Error,
+                $"{_name}: poll failed ({_failures} in a row): {ex.GetType().Name}: {ex.Message}", ex.Message);
             // Network/server trouble: 30s, 60s, 120s ... capped at 15m.
             // Respect 429 and other overload responses instead of repeatedly retrying:
             // the server's Retry-After (kept within 1 min..1 h) or else 15 minutes.
@@ -222,9 +247,19 @@ internal sealed class QuotaIndicator : IDisposable
         }
     }
 
+    private string? _lastLoggedError;
+
+    // A failure that repeats unchanged every few minutes would only grow the log: the first one is logged at its
+    // level, repeats at Verbose.
+    private void LogFailure(LogLevel level, string message, string reason)
+    {
+        Log.Write(reason == _lastLoggedError ? LogLevel.Verbose : level, message);
+        _lastLoggedError = reason;
+    }
+
     public void RequestManualRefresh()
     {
-        if (_disposed || _busy || !_enabled) return;
+        if (_disposed || _busy || !_enabled || _paused) return;
         if (DateTimeOffset.UtcNow - _lastAttemptUtc < TimeSpan.FromSeconds(15) ||
             DateTimeOffset.UtcNow < _rateLimitedUntilUtc) return;
         _nextPollUtc = DateTimeOffset.MinValue;
