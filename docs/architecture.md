@@ -23,7 +23,7 @@ Windows draws every notification icon at 16 DIP and `Shell_NotifyIcon` has no si
 
 ## Time bar (added 2026-10-24, experimental colors)
 
-Enlarged icons are requested 1.25× wider than tall (TrayIconSize protocol v2, width × height) and the painter draws the 160×128 picture squeezed into the 128×128 `HICON` (Explorer stretches it back with `Stretch=Fill`). The strip on the right is `QuotaUsage.TimeLeft` — (reset − now) / window, 1 when there is no reset yet and nothing is used. Its color is `QuotaUsage.Pace`: remaining time minus remaining allowance ≤ 10 points on track, ≤ 25 behind, more short. The outline keeps its own rule (remaining allowance); whether both should share one rule is open. The level is quantized to 48 steps and computed from the last reading on the 1-second UI timer — no extra requests. Not shown at Standard size or when the size request failed (a square icon would show it squeezed).
+Enlarged icons are requested 1.25× wider than tall (TrayIconSize protocol v2, width × height) and the painter draws the 160×128 picture squeezed into the 128×128 `HICON` (Explorer stretches it back with `Stretch=Fill`). The strip on the right is `QuotaUsage.TimeLeft` — (reset − now) / window, 1 when there is no reset yet and nothing is used. Its color is `QuotaUsage.Pace`: remaining time minus remaining allowance ≤ 10 points on track, ≤ 25 behind, more short. The outline keeps its own rule (remaining allowance); whether both should share one rule is open. The visual level uses the square root of the time share, then is quantized to 48 steps, giving more detail near the reset. Pace keeps the actual linear time share. The level is computed from the last reading on the 1-second UI timer — no extra requests. Not shown at Standard size or when the size request failed (a square icon would show it squeezed).
 
 ## Architecture
 
@@ -35,6 +35,7 @@ Enlarged icons are requested 1.25× wider than tall (TrayIconSize protocol v2, w
 - `ClaudeUsageClient`: re-reads `claudeAiOauth.accessToken` from `.credentials.json` (`CLAUDE_CONFIG_DIR` honored) for each request, refuses locally when `expiresAt` has passed, reports only HTTP status codes in errors.
 - `ClaudeUsageParser`: `five_hour` and `seven_day` `utilization` (percent used; >100 clamps to 0 remaining) and optional ISO `resets_at`.
 - `Settings`: persist refresh interval and per-icon visibility (at least one stays visible). Startup registration optional via current-user Run key.
+- `QuotaTooltip`: a non-activating hover window anchored to the shell notification icon. Draws 5h above 7d, skips absent windows, and shows the countdown next to each indicator.
 - `TrayIconPainter`: same silhouette for both, traffic-light outline, gray for stale; the fill identifies the source (dark = Codex, terracotta with a dark gap ring = Claude). Digits in Bahnschrift SemiBold Condensed (Segoe UI Bold fallback) with a dark halo.
 
 ## Networking and lifecycle

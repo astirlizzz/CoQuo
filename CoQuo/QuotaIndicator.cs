@@ -24,6 +24,7 @@ internal sealed class QuotaIndicator : IDisposable
     private readonly Func<int> _refreshSeconds;
     private readonly CancellationToken _lifetime;
     private readonly NotifyIcon _tray;
+    private readonly QuotaTooltip _tooltip;
     private readonly ToolStripMenuItem _value;
     private readonly ToolStripMenuItem _reset;
     private readonly ToolStripMenuItem _updated;
@@ -61,14 +62,14 @@ internal sealed class QuotaIndicator : IDisposable
         _tray = new NotifyIcon
         {
             Icon = TrayIconPainter.Create(null, stale: true, provider),
-            Text = $"CoQuo {ShortTitle} — starting",
             ContextMenuStrip = menu
         };
+        _tooltip = new QuotaTooltip(_tray, _provider, GetTooltipContent);
         _tray.DoubleClick += (_, _) => RequestManualRefresh();
     }
 
     private string Title => $"{_name} {(_window == QuotaWindow.FiveHour ? "5-hour" : "weekly")}";
-    private string ShortTitle => $"{_name} {(_window == QuotaWindow.FiveHour ? "5h" : "weekly")}";
+
     private QuotaUsage? Usage => _lastReading?[_window];
 
     /// <summary>Which window the icon shows; served from the last reading without a new request.</summary>
@@ -99,6 +100,7 @@ internal sealed class QuotaIndicator : IDisposable
         {
             if (_disposed) return;
             _enabled = value;
+            if (!value) _tooltip.Dismiss();
             _tray.Visible = value;
             foreach (var item in MenuItems) item.Visible = value;
             if (value) PollSoonIfOutdated();
@@ -124,7 +126,8 @@ internal sealed class QuotaIndicator : IDisposable
         {
             if (_disposed || _paused == value) return;
             _paused = value;
-            if (!value) PollSoonIfOutdated();
+            if (value) _tooltip.Dismiss();
+            else PollSoonIfOutdated();
         }
     }
 
@@ -162,14 +165,16 @@ internal sealed class QuotaIndicator : IDisposable
     // Only a successfully widened icon has room for the bar; a square one would show it squeezed.
     private bool ShowsTimeBar => _appliedIconSize > TrayIconSizeClient.StandardSize && IconSizeError is null;
 
-    // Steps of the drawn level: the icon is repainted a few dozen times per window, not every second.
+    // Steps of the drawn level, after easing: more of the repaints fall near the reset.
     private const int TimeBarSteps = 48;
 
-    private TimeBar? CurrentTimeBar(QuotaUsage? usage)
+    private TimeBar? CurrentTimeBar(QuotaUsage? usage, DateTimeOffset now)
     {
         if (!ShowsTimeBar) return null;
-        var now = DateTimeOffset.UtcNow;
-        var level = usage?.TimeLeft(now) is { } left ? Math.Ceiling(left * TimeBarSteps) / TimeBarSteps : (double?)null;
+        // Expand the tail so the last hour is still readable at tray size.
+        // Quantize after easing to keep the extra detail near the reset.
+        var level = usage?.TimeLeft(now) is { } left
+            ? Math.Ceiling(Math.Sqrt(left) * TimeBarSteps) / TimeBarSteps : (double?)null;
         return new TimeBar(level, usage?.Pace(now));
     }
 
@@ -274,21 +279,22 @@ internal sealed class QuotaIndicator : IDisposable
         UpdateUi();
     }
 
-    private bool IsStale()
+    private bool IsStale(QuotaUsage? usage, DateTimeOffset now)
     {
-        if (Usage is not { } usage || _lastSuccessUtc is null || _lastError is not null) return true;
-        if (usage.ResetAt is { } reset && DateTimeOffset.UtcNow >= reset) return true;
-        return DateTimeOffset.UtcNow - _lastSuccessUtc >
+        if (usage is null || _lastSuccessUtc is null || _lastError is not null) return true;
+        if (usage.ResetAt is { } reset && now >= reset) return true;
+        return now - _lastSuccessUtc >
                TimeSpan.FromSeconds(Math.Max(180, IntervalSeconds * 2 + 30));
     }
 
     public void UpdateUi()
     {
         if (_disposed || !_enabled) return;
+        var now = DateTimeOffset.UtcNow;
         var usage = Usage;
         var value = usage?.RoundedRemaining;
-        var stale = IsStale();
-        var bar = CurrentTimeBar(usage);
+        var stale = IsStale(usage, now);
+        var bar = CurrentTimeBar(usage, now);
         if (value != _displayedValue || stale != _displayedStale || bar != _displayedBar)
         {
             var icon = TrayIconPainter.Create(value, stale, _provider, bar);
@@ -304,7 +310,7 @@ internal sealed class QuotaIndicator : IDisposable
         _value.Text = usage is null ? $"{Title}: {missing}" :
             $"{Title}: {usage.RemainingPercent.ToString("0.#", CultureInfo.InvariantCulture)}% left" +
             (stale ? " (STALE)" : "");
-        var timeLeft = usage?.TimeLeft(DateTimeOffset.UtcNow);
+        var timeLeft = usage?.TimeLeft(now);
         var windowLeft = timeLeft is { } share ? $", {share * 100:0}% of window left" : "";
         _reset.Text = usage?.ResetAt is { } reset ?
             $"Resets: {reset.ToLocalTime():ddd, dd MMM HH:mm}{Until(reset)}{windowLeft}" :
@@ -312,11 +318,25 @@ internal sealed class QuotaIndicator : IDisposable
         var retry = RetryText();
         _updated.Text = _lastError is not null ? $"Error: {Shorten(_lastError, 80)}{retry}" :
             _lastSuccessUtc is { } updated ? $"Updated: {updated.ToLocalTime():HH:mm:ss}" : "Updated: never";
-        var headline = usage is null ? $"CoQuo: {ShortTitle} {missing}" :
-            $"CoQuo: {value}% {ShortTitle} left" + (timeLeft is { } time ? $", {time * 100:0}% of time" : "") +
-            (stale ? " (stale)" : "");
-        // The reason sits in the tooltip too, so a gray icon explains itself on hover.
-        _tray.Text = Shorten(_lastError is null ? headline : $"{headline}\n{Shorten(_lastError, 60)}{retry}", 127);
+        _tooltip.RefreshContent();
+    }
+
+    private QuotaTooltipContent GetTooltipContent()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var fiveHour = Row(_lastReading?.FiveHour);
+        var weekly = Row(_lastReading?.Weekly);
+        var status = _lastError is not null ? $"{_name}: {_lastError}{RetryText()}"
+            : fiveHour is null && weekly is null ? $"{_name}: quota unavailable" : null;
+        int iconSize = ShowsTimeBar ? _appliedIconSize : TrayIconSizeClient.StandardSize;
+        return new QuotaTooltipContent(fiveHour, weekly, status, iconSize);
+
+        QuotaTooltipRow? Row(QuotaUsage? usage)
+        {
+            if (usage is null) return null;
+            var countdown = usage.ResetCountdown(now) ?? (usage.TimeLeft(now) == 1 ? "Next use" : "—");
+            return new QuotaTooltipRow(usage.RoundedRemaining, IsStale(usage, now), CurrentTimeBar(usage, now), countdown);
+        }
     }
 
     private string RetryText()
@@ -341,6 +361,7 @@ internal sealed class QuotaIndicator : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _tooltip.Dispose();
         _tray.Visible = false;
         var old = _tray.Icon;
         _tray.Dispose();

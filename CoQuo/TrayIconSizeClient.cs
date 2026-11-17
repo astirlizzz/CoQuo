@@ -54,7 +54,7 @@ internal static class TrayIconSizeClient
         }
     }
 
-    private static bool TryGetIdentity(NotifyIcon icon, out IntPtr hwnd, out uint uid)
+    internal static bool TryGetIdentity(NotifyIcon icon, out IntPtr hwnd, out uint uid)
     {
         const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance;
         hwnd = IntPtr.Zero;

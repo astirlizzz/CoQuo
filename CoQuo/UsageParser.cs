@@ -11,6 +11,17 @@ public sealed record QuotaUsage(double RemainingPercent, DateTimeOffset? ResetAt
 
     public int RoundedRemaining => (int)Math.Round(RemainingPercent, MidpointRounding.AwayFromZero);
 
+    /// <summary>Compact countdown for display, or null if no reset was reported.</summary>
+    public string? ResetCountdown(DateTimeOffset now)
+    {
+        if (ResetAt is not { } reset) return null;
+        var left = reset - now;
+        if (left.Days > 0) return left.Hours == 0 ? $"{left.Days}d" : $"{left.Days}d {left.Hours}h";
+        if (left.Hours > 0) return left.Minutes == 0 ? $"{left.Hours}h" : $"{left.Hours}h {left.Minutes}m";
+        if (left.Minutes > 0) return $"{left.Minutes}m";
+        return left > TimeSpan.Zero ? "<1m" : "0m";
+    }
+
     /// <summary>Share of the window still ahead (1 = just started); null when unknown.</summary>
     public double? TimeLeft(DateTimeOffset now)
     {

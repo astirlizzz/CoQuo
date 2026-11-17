@@ -49,6 +49,16 @@ Check("pace ahead on track", FiveHour(80, 1).Pace(now) == QuotaPace.OnTrack);
 Check("pace behind at margin", FiveHour(40, 2.5).Pace(now) == QuotaPace.OnTrack && FiveHour(39, 2.5).Pace(now) == QuotaPace.Behind);
 Check("pace short", FiveHour(25, 2.5).Pace(now) == QuotaPace.Behind && FiveHour(24, 2.5).Pace(now) == QuotaPace.Short);
 
+// The hover countdown drops minutes once at least a day remains, and skips zero units.
+Check("countdown keeps only days and hours", FiveHour(50, 51.5).ResetCountdown(now) == "2d 3h");
+Check("countdown skips zero hours", FiveHour(50, 48.5).ResetCountdown(now) == "2d");
+Check("countdown keeps hours and minutes", FiveHour(50, 4.25).ResetCountdown(now) == "4h 15m");
+Check("countdown skips zero minutes", FiveHour(50, 4).ResetCountdown(now) == "4h");
+Check("countdown under an hour", FiveHour(50, 0.5).ResetCountdown(now) == "30m");
+Check("countdown under a minute", FiveHour(50, 1d / 120).ResetCountdown(now) == "<1m");
+Check("countdown after reset", FiveHour(50, -1).ResetCountdown(now) == "0m");
+Check("countdown without reset time", new QuotaUsage(100, null, 300).ResetCountdown(now) is null);
+
 Console.WriteLine($"{total - failures}/{total} tests passed");
 return failures == 0 ? 0 : 1;
 

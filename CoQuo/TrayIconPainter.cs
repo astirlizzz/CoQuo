@@ -6,7 +6,7 @@ namespace CoQuo;
 
 internal enum IconProvider { Codex, Claude }
 
-/// <summary>Gauge next to the icon: share of the limit window still ahead, colored by pace.</summary>
+/// <summary>Gauge next to the icon: eased share of the limit window still ahead, colored by pace.</summary>
 internal sealed record TimeBar(double? Level, QuotaPace? Pace);
 
 internal static class TrayIconPainter
@@ -23,6 +23,7 @@ internal static class TrayIconPainter
 
     // With a time bar the picture is this much wider than tall; TrayIconSize stretches the square icon back.
     public const double TimeBarAspect = 1.25;
+    private const int DrawingSize = 128;
 
     public static Icon Create(int? remaining, bool stale, IconProvider provider, TimeBar? bar = null)
     {
@@ -35,20 +36,26 @@ internal static class TrayIconPainter
     internal static Bitmap Render(int? remaining, bool stale, IconProvider provider, TimeBar? bar = null)
     {
         // Render large and let Windows scale to the taskbar's actual size.
-        const int size = 128;
-        var image = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        var image = new Bitmap(DrawingSize, DrawingSize, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(image);
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-        g.Clear(Color.Transparent);
-        if (bar is not null)
-        {
-            // Draw the wide picture squeezed into the square icon; vector drawing keeps it sharp once stretched back.
-            g.ScaleTransform((float)(1 / TimeBarAspect), 1);
-            DrawTimeBar(g, bar, stale, size * (float)TimeBarAspect);
-        }
-        DrawIcon(g, remaining, stale, provider);
+        // The tray bitmap is square. Explorer stretches it to the wider bounds when the bar is present.
+        Paint(g, new Rectangle(0, 0, DrawingSize, DrawingSize), remaining, stale, provider, bar);
         return image;
+    }
+
+    public static void Paint(Graphics g, Rectangle bounds, int? remaining, bool stale, IconProvider provider, TimeBar? bar)
+    {
+        var state = g.Save();
+        try
+        {
+            float width = bar is null ? DrawingSize : (float)(DrawingSize * TimeBarAspect);
+            g.TranslateTransform(bounds.X, bounds.Y);
+            g.ScaleTransform(bounds.Width / width, bounds.Height / (float)DrawingSize);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            if (bar is not null) DrawTimeBar(g, bar, stale, width);
+            DrawIcon(g, remaining, stale, provider);
+        }
+        finally { g.Restore(state); }
     }
 
     private static void DrawIcon(Graphics g, int? remaining, bool stale, IconProvider provider)
